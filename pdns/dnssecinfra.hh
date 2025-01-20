@@ -21,6 +21,7 @@
  */
 #pragma once
 #include "dnsrecords.hh"
+#include "dnspacket.hh"
 
 #include <string>
 #include <vector>
@@ -36,7 +37,7 @@ class DNSCryptoKeyEngine
 {
   public:
     explicit DNSCryptoKeyEngine(unsigned int algorithm) : d_algorithm(algorithm) {}
-    virtual ~DNSCryptoKeyEngine() {};
+    virtual ~DNSCryptoKeyEngine() = default;
     [[nodiscard]] virtual string getName() const = 0;
 
     using stormap_t = std::map<std::string, std::string>;
@@ -66,7 +67,7 @@ class DNSCryptoKeyEngine
     void createFromPEMString(DNSKEYRecordContent& drc, const std::string& contents)
     {
       // NOLINTNEXTLINE(*-cast): POSIX APIs.
-      unique_ptr<std::FILE, decltype(&std::fclose)> inputFile{fmemopen(const_cast<char*>(contents.data()), contents.length(), "r"), &std::fclose};
+      pdns::UniqueFilePtr inputFile{fmemopen(const_cast<char*>(contents.data()), contents.length(), "r")};
       createFromPEMFile(drc, *inputFile);
     }
 
@@ -89,7 +90,7 @@ class DNSCryptoKeyEngine
 
       std::string output{};
       output.resize(buflen);
-      unique_ptr<std::FILE, decltype(&std::fclose)> outputFile{fmemopen(output.data(), output.length() - 1, "w"), &std::fclose};
+      pdns::UniqueFilePtr outputFile{fmemopen(output.data(), output.length() - 1, "w")};
       convertToPEMFile(*outputFile);
       std::fflush(outputFile.get());
       output.resize(std::ftell(outputFile.get()));
@@ -291,7 +292,7 @@ string hashQNameWithSalt(const std::string& salt, unsigned int iterations, const
 void incrementHash(std::string& raw);
 void decrementHash(std::string& raw);
 
-void addRRSigs(DNSSECKeeper& dk, UeberBackend& db, const std::set<DNSName>& authMap, vector<DNSZoneRecord>& rrs);
+void addRRSigs(DNSSECKeeper& dk, UeberBackend& db, const std::set<DNSName>& authSet, vector<DNSZoneRecord>& rrs, DNSPacket* packet=nullptr);
 
 void addTSIG(DNSPacketWriter& pw, TSIGRecordContent& trc, const DNSName& tsigkeyname, const string& tsigsecret, const string& tsigprevious, bool timersonly);
 bool validateTSIG(const std::string& packet, size_t sigPos, const TSIGTriplet& tt, const TSIGRecordContent& trc, const std::string& previousMAC, const std::string& theirMAC, bool timersOnly, unsigned int dnsHeaderOffset=0);

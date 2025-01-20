@@ -20,23 +20,69 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// for OpenBSD, sys/socket.h needs to come before net/if.h
+#include <sys/socket.h>
+#include <net/if.h>
+
+#include <boost/format.hpp>
+
+#include "config.h"
 #include "dnsdist.hh"
+#include "dnsdist-backend.hh"
+#include "dnsdist-backoff.hh"
 #include "dnsdist-metrics.hh"
 #include "dnsdist-nghttp2.hh"
 #include "dnsdist-random.hh"
 #include "dnsdist-rings.hh"
+#include "dnsdist-snmp.hh"
 #include "dnsdist-tcp.hh"
+#include "dnsdist-xsk.hh"
 #include "dolog.hh"
+#include "xsk.hh"
 
 bool DownstreamState::passCrossProtocolQuery(std::unique_ptr<CrossProtocolQuery>&& cpq)
 {
-  if (d_config.d_dohPath.empty()) {
-    return g_tcpclientthreads && g_tcpclientthreads->passCrossProtocolQueryToThread(std::move(cpq));
-  }
-  else {
+#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
+  if (!d_config.d_dohPath.empty()) {
     return g_dohClientThreads && g_dohClientThreads->passCrossProtocolQueryToThread(std::move(cpq));
   }
+#endif
+  return g_tcpclientthreads && g_tcpclientthreads->passCrossProtocolQueryToThread(std::move(cpq));
 }
+
+#ifdef HAVE_XSK
+void DownstreamState::addXSKDestination(int fd)
+{
+  auto socklen = d_config.remote.getSocklen();
+  ComboAddress local;
+  if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &socklen)) {
+    return;
+  }
+
+  {
+    auto addresses = d_socketSourceAddresses.write_lock();
+    addresses->push_back(local);
+  }
+  dnsdist::xsk::addDestinationAddress(local);
+  for (size_t idx = 0; idx < d_xskSockets.size(); idx++) {
+    d_xskSockets.at(idx)->addWorkerRoute(d_xskInfos.at(idx), local);
+  }
+}
+
+void DownstreamState::removeXSKDestination(int fd)
+{
+  auto socklen = d_config.remote.getSocklen();
+  ComboAddress local;
+  if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &socklen)) {
+    return;
+  }
+
+  dnsdist::xsk::removeDestinationAddress(local);
+  for (auto& xskSocket : d_xskSockets) {
+    xskSocket->removeWorkerRoute(local);
+  }
+}
+#endif /* HAVE_XSK */
 
 bool DownstreamState::reconnect(bool initialAttempt)
 {
@@ -51,11 +97,23 @@ bool DownstreamState::reconnect(bool initialAttempt)
   }
 
   connected = false;
+#ifdef HAVE_XSK
+  if (!d_xskInfos.empty()) {
+    auto addresses = d_socketSourceAddresses.write_lock();
+    addresses->clear();
+  }
+#endif /* HAVE_XSK */
+
   for (auto& fd : sockets) {
     if (fd != -1) {
       if (sockets.size() > 1) {
         (*mplexer.lock())->removeReadFD(fd);
       }
+#ifdef HAVE_XSK
+      if (!d_xskInfos.empty()) {
+        removeXSKDestination(fd);
+      }
+#endif /* HAVE_XSK */
       /* shutdown() is needed to wake up recv() in the responderThread */
       shutdown(fd, SHUT_RDWR);
       close(fd);
@@ -86,11 +144,21 @@ bool DownstreamState::reconnect(bool initialAttempt)
       if (sockets.size() > 1) {
         (*mplexer.lock())->addReadFD(fd, [](int, boost::any) {});
       }
+#ifdef HAVE_XSK
+      if (!d_xskInfos.empty()) {
+        addXSKDestination(fd);
+      }
+#endif /* HAVE_XSK */
       connected = true;
     }
     catch (const std::runtime_error& error) {
-      if (initialAttempt || g_verbose) {
-        infolog("Error connecting to new server with address %s: %s", d_config.remote.toStringWithPort(), error.what());
+      if (initialAttempt || dnsdist::configuration::getCurrentRuntimeConfiguration().d_verbose) {
+        if (!IsAnyAddress(d_config.sourceAddr) || !d_config.sourceItfName.empty()) {
+            infolog("Error connecting to new server with address %s (source address: %s, source interface: %s): %s", d_config.remote.toStringWithPort(), IsAnyAddress(d_config.sourceAddr) ? "not set" : d_config.sourceAddr.toString(), d_config.sourceItfName.empty() ? "not set" : d_config.sourceItfName, error.what());
+          }
+        else {
+          infolog("Error connecting to new server with address %s: %s", d_config.remote.toStringWithPort(), error.what());
+        }
       }
       connected = false;
       break;
@@ -99,8 +167,19 @@ bool DownstreamState::reconnect(bool initialAttempt)
 
   /* if at least one (re-)connection failed, close all sockets */
   if (!connected) {
+#ifdef HAVE_XSK
+    if (!d_xskInfos.empty()) {
+      auto addresses = d_socketSourceAddresses.write_lock();
+      addresses->clear();
+    }
+#endif /* HAVE_XSK */
     for (auto& fd : sockets) {
       if (fd != -1) {
+#ifdef HAVE_XSK
+        if (!d_xskInfos.empty()) {
+          removeXSKDestination(fd);
+        }
+#endif /* HAVE_XSK */
         if (sockets.size() > 1) {
           try {
             (*mplexer.lock())->removeReadFD(fd);
@@ -171,6 +250,7 @@ void DownstreamState::stop()
 void DownstreamState::hash()
 {
   vinfolog("Computing hashes for id=%s and weight=%d", *d_config.id, d_config.d_weight);
+  const auto hashPerturbation = dnsdist::configuration::getImmutableConfiguration().d_hashPerturbation;
   auto w = d_config.d_weight;
   auto idStr = boost::str(boost::format("%s") % *d_config.id);
   auto lockedHashes = hashes.write_lock();
@@ -178,7 +258,8 @@ void DownstreamState::hash()
   lockedHashes->reserve(w);
   while (w > 0) {
     std::string uuid = boost::str(boost::format("%s-%d") % idStr % w);
-    unsigned int wshash = burtleCI(reinterpret_cast<const unsigned char*>(uuid.c_str()), uuid.size(), g_hashperturb);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): sorry, it's the burtle API
+    unsigned int wshash = burtleCI(reinterpret_cast<const unsigned char*>(uuid.c_str()), uuid.size(), hashPerturbation);
     lockedHashes->push_back(wshash);
     --w;
   }
@@ -235,23 +316,19 @@ DownstreamState::DownstreamState(DownstreamState::Config&& config, std::shared_p
 
   setName(d_config.name);
 
-  if (d_tlsCtx) {
-    if (!d_config.d_dohPath.empty()) {
+  if (d_tlsCtx && !d_config.d_dohPath.empty()) {
 #ifdef HAVE_NGHTTP2
-      setupDoHClientProtocolNegotiation(d_tlsCtx);
+    auto outgoingDoHWorkerThreads = dnsdist::configuration::getImmutableConfiguration().d_outgoingDoHWorkers;
+    if (dnsdist::configuration::isImmutableConfigurationDone() && outgoingDoHWorkerThreads && *outgoingDoHWorkerThreads == 0) {
+      throw std::runtime_error("Error: setOutgoingDoHWorkerThreads() is set to 0 so no outgoing DoH worker thread is available to serve queries");
+    }
 
-      if (g_configurationDone && g_outgoingDoHWorkerThreads && *g_outgoingDoHWorkerThreads == 0) {
-        throw std::runtime_error("Error: setOutgoingDoHWorkerThreads() is set to 0 so no outgoing DoH worker thread is available to serve queries");
-      }
-
-      if (!g_outgoingDoHWorkerThreads || *g_outgoingDoHWorkerThreads == 0) {
-        g_outgoingDoHWorkerThreads = 1;
-      }
+    if (!dnsdist::configuration::isImmutableConfigurationDone() && (!outgoingDoHWorkerThreads || *outgoingDoHWorkerThreads == 0)) {
+      dnsdist::configuration::updateImmutableConfiguration([](dnsdist::configuration::ImmutableConfiguration& immutableConfig) {
+        immutableConfig.d_outgoingDoHWorkers = 1;
+      });
+    }
 #endif /* HAVE_NGHTTP2 */
-    }
-    else {
-      setupDoTProtocolNegotiation(d_tlsCtx);
-    }
   }
 
   if (connect && !isTCPOnly()) {
@@ -267,23 +344,32 @@ DownstreamState::DownstreamState(DownstreamState::Config&& config, std::shared_p
 void DownstreamState::start()
 {
   if (connected && !threadStarted.test_and_set()) {
-    tid = std::thread(responderThread, shared_from_this());
+#ifdef HAVE_XSK
+    for (auto& xskInfo : d_xskInfos) {
+      auto xskResponderThread = std::thread(dnsdist::xsk::XskResponderThread, shared_from_this(), xskInfo);
+      if (!d_config.d_cpus.empty()) {
+        mapThreadToCPUList(xskResponderThread.native_handle(), d_config.d_cpus);
+      }
+      xskResponderThread.detach();
+    }
+#endif /* HAVE_XSK */
 
+    auto tid = std::thread(responderThread, shared_from_this());
     if (!d_config.d_cpus.empty()) {
       mapThreadToCPUList(tid.native_handle(), d_config.d_cpus);
     }
-
     tid.detach();
   }
 }
 
 void DownstreamState::connectUDPSockets()
 {
-  if (s_randomizeIDs) {
+  const auto& config = dnsdist::configuration::getImmutableConfiguration();
+  if (config.d_randomizeIDsToBackend) {
     idStates.clear();
   }
   else {
-    idStates.resize(g_maxOutstanding);
+    idStates.resize(config.d_maxUDPOutstanding);
   }
   sockets.resize(d_config.d_numberOfSockets);
 
@@ -323,8 +409,8 @@ int DownstreamState::pickSocketForSending()
     return sockets[0];
   }
 
-  size_t idx;
-  if (s_randomizeSockets) {
+  size_t idx{0};
+  if (dnsdist::configuration::getImmutableConfiguration().d_randomizeUDPSocketsToBackend) {
     idx = dnsdist::getRandomValue(numberOfSockets);
   }
   else {
@@ -346,14 +432,10 @@ void DownstreamState::pickSocketsReadyForReceiving(std::vector<int>& ready)
   (*mplexer.lock())->getAvailableFDs(ready, 1000);
 }
 
-bool DownstreamState::s_randomizeSockets{false};
-bool DownstreamState::s_randomizeIDs{false};
-int DownstreamState::s_udpTimeout{2};
-
-static bool isIDSExpired(const IDState& ids)
+static bool isIDSExpired(const IDState& ids, uint8_t udpTimeout)
 {
   auto age = ids.age.load();
-  return age > DownstreamState::s_udpTimeout;
+  return age > udpTimeout;
 }
 
 void DownstreamState::handleUDPTimeout(IDState& ids)
@@ -405,11 +487,13 @@ void DownstreamState::handleUDPTimeouts()
     return;
   }
 
-  if (s_randomizeIDs) {
+  const auto& config = dnsdist::configuration::getImmutableConfiguration();
+  const auto udpTimeout = config.d_udpTimeout;
+  if (config.d_randomizeIDsToBackend) {
     auto map = d_idStatesMap.lock();
     for (auto it = map->begin(); it != map->end(); ) {
       auto& ids = it->second;
-      if (isIDSExpired(ids)) {
+      if (isIDSExpired(ids, udpTimeout)) {
         handleUDPTimeout(ids);
         it = map->erase(it);
         continue;
@@ -424,7 +508,7 @@ void DownstreamState::handleUDPTimeouts()
         if (!ids.isInUse()) {
           continue;
         }
-        if (!isIDSExpired(ids)) {
+        if (!isIDSExpired(ids, udpTimeout)) {
           ++ids.age;
           continue;
         }
@@ -433,7 +517,7 @@ void DownstreamState::handleUDPTimeouts()
           continue;
         }
         /* check again, now that we have locked this state */
-        if (ids.isInUse() && isIDSExpired(ids)) {
+        if (ids.isInUse() && isIDSExpired(ids, udpTimeout)) {
           handleUDPTimeout(ids);
         }
       }
@@ -443,7 +527,8 @@ void DownstreamState::handleUDPTimeouts()
 
 uint16_t DownstreamState::saveState(InternalQueryState&& state)
 {
-  if (s_randomizeIDs) {
+  const auto& config = dnsdist::configuration::getImmutableConfiguration();
+  if (config.d_randomizeIDsToBackend) {
     /* if the state is already in use we will retry,
        up to 5 five times. The last selected one is used
        even if it was already in use */
@@ -505,7 +590,8 @@ uint16_t DownstreamState::saveState(InternalQueryState&& state)
 
 void DownstreamState::restoreState(uint16_t id, InternalQueryState&& state)
 {
-  if (s_randomizeIDs) {
+  const auto& config = dnsdist::configuration::getImmutableConfiguration();
+  if (config.d_randomizeIDsToBackend) {
     auto map = d_idStatesMap.lock();
 
     auto [it, inserted] = map->emplace(id, IDState());
@@ -546,8 +632,8 @@ void DownstreamState::restoreState(uint16_t id, InternalQueryState&& state)
 std::optional<InternalQueryState> DownstreamState::getState(uint16_t id)
 {
   std::optional<InternalQueryState> result = std::nullopt;
-
-  if (s_randomizeIDs) {
+  const auto& config = dnsdist::configuration::getImmutableConfiguration();
+  if (config.d_randomizeIDsToBackend) {
     auto map = d_idStatesMap.lock();
 
     auto it = map->find(id);
@@ -619,6 +705,7 @@ bool DownstreamState::healthCheckRequired(std::optional<time_t> currentTime)
         lastResults.clear();
         vinfolog("Backend %s reached the lazy health-check threshold (%f%% out of %f%%, looking at sample of %d items with %d failures), moving to Potential Failure state", getNameWithAddr(), current, maxFailureRate, totalCount, failures);
         stats->d_status = LazyHealthCheckStats::LazyStatus::PotentialFailure;
+        consecutiveSuccessfulChecks = 0;
         /* we update the next check time here because the check might time out,
            and we do not want to send a second check during that time unless
            the timer is actually very short */
@@ -677,14 +764,14 @@ void DownstreamState::updateNextLazyHealthCheck(LazyHealthCheckStats& stats, boo
       }
 
       time_t backOff = d_config.d_lazyHealthCheckMaxBackOff;
-      double backOffCoeffTmp = std::pow(2.0, failedTests);
-      if (backOffCoeffTmp != HUGE_VAL && static_cast<uint64_t>(backOffCoeffTmp) <= static_cast<uint64_t>(std::numeric_limits<time_t>::max())) {
-        time_t backOffCoeff = static_cast<time_t>(backOffCoeffTmp);
-        if ((std::numeric_limits<time_t>::max() / d_config.d_lazyHealthCheckFailedInterval) >= backOffCoeff) {
-          backOff = d_config.d_lazyHealthCheckFailedInterval * backOffCoeff;
-          if (backOff > d_config.d_lazyHealthCheckMaxBackOff || (std::numeric_limits<time_t>::max() - now) <= backOff) {
-            backOff = d_config.d_lazyHealthCheckMaxBackOff;
-          }
+      const ExponentialBackOffTimer backOffTimer(d_config.d_lazyHealthCheckMaxBackOff);
+      auto backOffCoeffTmp = backOffTimer.get(failedTests - 1);
+      /* backOffCoeffTmp cannot be higher than d_config.d_lazyHealthCheckMaxBackOff */
+      const auto backOffCoeff = static_cast<time_t>(backOffCoeffTmp);
+      if ((std::numeric_limits<time_t>::max() / d_config.d_lazyHealthCheckFailedInterval) >= backOffCoeff) {
+        backOff = d_config.d_lazyHealthCheckFailedInterval * backOffCoeff;
+        if (backOff > d_config.d_lazyHealthCheckMaxBackOff || (std::numeric_limits<time_t>::max() - now) <= backOff) {
+          backOff = d_config.d_lazyHealthCheckMaxBackOff;
         }
       }
 
@@ -713,9 +800,11 @@ void DownstreamState::submitHealthCheckResult(bool initial, bool newResult)
     setUpStatus(newResult);
     if (newResult == false) {
       currentCheckFailures++;
-      auto stats = d_lazyHealthCheckStats.lock();
-      stats->d_status = LazyHealthCheckStats::LazyStatus::Failed;
-      updateNextLazyHealthCheck(*stats, false);
+      if (d_config.availability == DownstreamState::Availability::Lazy) {
+        auto stats = d_lazyHealthCheckStats.lock();
+        stats->d_status = LazyHealthCheckStats::LazyStatus::Failed;
+        updateNextLazyHealthCheck(*stats, false);
+      }
     }
     return;
   }
@@ -725,12 +814,12 @@ void DownstreamState::submitHealthCheckResult(bool initial, bool newResult)
   if (newResult) {
     /* check succeeded */
     currentCheckFailures = 0;
+    consecutiveSuccessfulChecks++;
 
-    if (!upStatus) {
+    if (!upStatus.load(std::memory_order_relaxed)) {
       /* we were previously marked as "down" and had a successful health-check,
          let's see if this is enough to move to the "up" state or if we need
          more successful health-checks for that */
-      consecutiveSuccessfulChecks++;
       if (consecutiveSuccessfulChecks < d_config.minRiseSuccesses) {
         /* we need more than one successful check to rise
            and we didn't reach the threshold yet, let's stay down */
@@ -758,7 +847,7 @@ void DownstreamState::submitHealthCheckResult(bool initial, bool newResult)
 
     currentCheckFailures++;
 
-    if (upStatus) {
+    if (upStatus.load(std::memory_order_relaxed)) {
       /* we were previously marked as "up" and failed a health-check,
          let's see if this is enough to move to the "down" state or if
          need more failed checks for that */
@@ -771,13 +860,13 @@ void DownstreamState::submitHealthCheckResult(bool initial, bool newResult)
         auto stats = d_lazyHealthCheckStats.lock();
         vinfolog("Backend %s failed its health-check, moving from Potential failure to Failed", getNameWithAddr());
         stats->d_status = LazyHealthCheckStats::LazyStatus::Failed;
-        currentCheckFailures = 0;
+        currentCheckFailures = 1;
         updateNextLazyHealthCheck(*stats, false);
       }
     }
   }
 
-  if (newState != upStatus) {
+  if (newState != upStatus.load(std::memory_order_relaxed)) {
     /* we are actually moving to a new state */
     if (!IsAnyAddress(d_config.remote)) {
       infolog("Marking downstream %s as '%s'", getNameWithAddr(), newState ? "up" : "down");
@@ -788,10 +877,118 @@ void DownstreamState::submitHealthCheckResult(bool initial, bool newResult)
     }
 
     setUpStatus(newState);
-    if (g_snmpAgent && g_snmpTrapsEnabled) {
+    if (g_snmpAgent != nullptr && dnsdist::configuration::getImmutableConfiguration().d_snmpTrapsEnabled) {
       g_snmpAgent->sendBackendStatusChangeTrap(*this);
     }
   }
+}
+
+#ifdef HAVE_XSK
+[[nodiscard]] ComboAddress DownstreamState::pickSourceAddressForSending()
+{
+  if (!connected) {
+    waitUntilConnected();
+  }
+
+  auto addresses = d_socketSourceAddresses.read_lock();
+  auto numberOfAddresses = addresses->size();
+  if (numberOfAddresses == 0) {
+    throw std::runtime_error("No source address available for sending XSK data to backend " + getNameWithAddr());
+  }
+  size_t idx = dnsdist::getRandomValue(numberOfAddresses);
+  return (*addresses)[idx % numberOfAddresses];
+}
+
+void DownstreamState::registerXsk(std::vector<std::shared_ptr<XskSocket>>& xsks)
+{
+  d_xskSockets = xsks;
+
+  if (d_config.sourceAddr.sin4.sin_family == 0 || (IsAnyAddress(d_config.sourceAddr))) {
+    const auto& ifName = xsks.at(0)->getInterfaceName();
+    auto addresses = getListOfAddressesOfNetworkInterface(ifName);
+    if (addresses.empty()) {
+      throw std::runtime_error("Unable to get source address from interface " + ifName);
+    }
+
+    if (addresses.size() > 1) {
+      warnlog("More than one address configured on interface %s, picking the first one (%s) for XSK. Set the 'source' parameter on 'newServer' if you want to use a different address.", ifName, addresses.at(0).toString());
+    }
+    d_config.sourceAddr = addresses.at(0);
+  }
+  d_config.sourceMACAddr = d_xskSockets.at(0)->getSourceMACAddress();
+
+  for (auto& xsk : d_xskSockets) {
+    auto xskInfo = XskWorker::create(XskWorker::Type::Bidirectional, xsk->sharedEmptyFrameOffset);
+    d_xskInfos.push_back(xskInfo);
+    xsk->addWorker(xskInfo);
+  }
+  reconnect(false);
+}
+#endif /* HAVE_XSK */
+
+bool DownstreamState::parseSourceParameter(const std::string& source, DownstreamState::Config& config)
+{
+  /* handle source in the following forms:
+     - v4 address ("192.0.2.1")
+     - v6 address ("2001:DB8::1")
+     - interface name ("eth0")
+     - v4 address and interface name ("192.0.2.1@eth0")
+     - v6 address and interface name ("2001:DB8::1@eth0")
+  */
+  std::string::size_type pos = source.find('@');
+  if (pos == std::string::npos) {
+    /* no '@', try to parse that as a valid v4/v6 address */
+    try {
+      config.sourceAddr = ComboAddress(source);
+      return true;
+    }
+    catch (...) {
+    }
+  }
+
+  /* try to parse as interface name, or v4/v6@itf */
+  config.sourceItfName = source.substr(pos == std::string::npos ? 0 : pos + 1);
+  unsigned int itfIdx = if_nametoindex(config.sourceItfName.c_str());
+  if (itfIdx != 0) {
+    if (pos == 0 || pos == std::string::npos) {
+      /* "eth0" or "@eth0" */
+      config.sourceItf = itfIdx;
+    }
+    else {
+      /* "192.0.2.1@eth0" */
+      config.sourceAddr = ComboAddress(source.substr(0, pos));
+      config.sourceItf = itfIdx;
+    }
+#ifdef SO_BINDTODEVICE
+    if (!dnsdist::configuration::isImmutableConfigurationDone()) {
+      /* we need to retain CAP_NET_RAW to be able to set SO_BINDTODEVICE in the health checks */
+      dnsdist::configuration::updateImmutableConfiguration([](dnsdist::configuration::ImmutableConfiguration& currentConfig) {
+        currentConfig.d_capabilitiesToRetain.insert("CAP_NET_RAW");
+      });
+    }
+#endif
+    return true;
+  }
+
+  warnlog("Dismissing source %s because '%s' is not a valid interface name", source, config.sourceItfName);
+  return false;
+}
+
+std::optional<DownstreamState::Availability> DownstreamState::getAvailabilityFromStr(const std::string& mode)
+{
+  if (pdns_iequals(mode, "auto")) {
+    return DownstreamState::Availability::Auto;
+  }
+  if (pdns_iequals(mode, "lazy")) {
+    return DownstreamState::Availability::Lazy;
+  }
+  if (pdns_iequals(mode, "up")) {
+    return DownstreamState::Availability::Up;
+  }
+  if (pdns_iequals(mode, "down")) {
+    return DownstreamState::Availability::Down;
+  }
+  return std::nullopt;
 }
 
 size_t ServerPool::countServers(bool upOnly)
@@ -881,4 +1078,18 @@ void ServerPool::removeServer(shared_ptr<DownstreamState>& server)
     }
   }
   *servers = std::move(newServers);
+}
+
+namespace dnsdist::backend
+{
+void registerNewBackend(std::shared_ptr<DownstreamState>& backend)
+{
+  dnsdist::configuration::updateRuntimeConfiguration([&backend](dnsdist::configuration::RuntimeConfiguration& config) {
+    auto& backends = config.d_backends;
+    backends.push_back(backend);
+    std::stable_sort(backends.begin(), backends.end(), [](const std::shared_ptr<DownstreamState>& lhs, const std::shared_ptr<DownstreamState>& rhs) {
+      return lhs->d_config.order < rhs->d_config.order;
+    });
+  });
+}
 }

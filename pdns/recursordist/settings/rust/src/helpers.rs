@@ -20,8 +20,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-use std::{error::Error, fmt};
 use crate::ValidationError;
+use std::{error::Error, fmt};
 
 /* Helper code for validation  */
 impl Error for ValidationError {}
@@ -40,6 +40,16 @@ impl<const U: u64> U64<U> {
         U
     }
     pub fn is_equal(v: &u64) -> bool {
+        v == &U
+    }
+}
+
+pub struct U32<const U: u32>;
+impl<const U: u32> U32<U> {
+    pub const fn value() -> u32 {
+        U
+    }
+    pub fn is_equal(v: &u32) -> bool {
         v == &U
     }
 }
@@ -64,10 +74,9 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 
 pub const OVERRIDE_TAG: &str = "!override";
 
-pub fn is_overriding(m: &serde_yaml::Mapping, key: &str) -> bool{
+pub fn is_overriding(m: &serde_yaml::Mapping, key: &str) -> bool {
     if let Some(serde_yaml::Value::Tagged(vvv)) = m.get(key) {
         return vvv.tag == OVERRIDE_TAG;
     }
     false
 }
-

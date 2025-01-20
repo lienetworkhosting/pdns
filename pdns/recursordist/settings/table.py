@@ -40,6 +40,7 @@ The number of records to cache in the aggressive cache. If set to a value greate
 To use this, DNSSEC processing or validation must be enabled by setting :ref:`setting-dnssec` to ``process``, ``log-fail`` or ``validate``.
  ''',
         'versionadded': '4.5.0',
+        'runtime': 'set-max-aggr-nsec-cache-size',
     },
     {
         'name' : 'aggressive_cache_min_nsec3_hit_ratio',
@@ -75,6 +76,7 @@ When the Proxy Protocol is enabled (see :ref:`setting-proxy-protocol-from`), the
 
 Note that specifying an IP address without a netmask uses an implicit netmask of /32 or /128.
  ''',
+        'runtime': ['reload-acls'],
     },
     {
         'name' : 'allow_from_file',
@@ -96,6 +98,7 @@ Overrides the :ref:`setting-allow-from` setting. Example content of th specified
  - ::1
 
  ''',
+        'runtime': ['reload-acls'],
     },
     {
         'name' : 'allow_notify_for',
@@ -108,7 +111,8 @@ Domain names specified in this list are used to permit incoming
 NOTIFY operations to wipe any cache entries that match the domain
 name. If this list is empty, all NOTIFY operations will be ignored.
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'runtime': ['reload-acls'],
     },
     {
         'name' : 'allow_notify_for_file',
@@ -132,7 +136,8 @@ Like :ref:`setting-allow-notify-for`, except reading a sequence of names from fi
  - example.org
 
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'runtime': ['reload-acls'],
     },
     {
         'name' : 'allow_notify_from',
@@ -171,12 +176,13 @@ Note that specifying an IP address without a netmask uses an implicit
 netmask of /32 or /128.
 
 NOTIFY operations received from a client listed in one of these netmasks
-will be accepted and used to wipe any cache entries whose zones match
+will be accepted and used to initiate a freshness check for an RPZ zone or wipe any cache entries whose zones match
 the zone specified in the NOTIFY operation, but only if that zone (or
 one of its parents) is included in :ref:`setting-allow-notify-for`,
 :ref:`setting-allow-notify-for-file`, or :ref:`setting-forward-zones-file` with a ``allow_notify`` set to ``true``.
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'runtime': ['reload-acls'],
     },
     {
         'name' : 'allow_notify_from_file',
@@ -192,7 +198,20 @@ by a '#'.
         'doc-new' : '''
 Like :ref:`setting-allow-notify-from`, except reading a sequence of `Subnet`_ from file.
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'runtime': ['reload-acls'],
+    },
+    {
+        'name' : 'allow_no_rd',
+        'section' : 'incoming',
+        'type' : LType.Bool,
+        'default' : 'false',
+        'help' : 'Allow \'no recursion desired (RD=0)\' queries.',
+        'doc' : '''
+Allow ``no recursion desired (RD=0) queries`` to query cache contents.
+If not set (the default), these queries are answered with rcode ``Refused``.
+ ''',
+    'versionadded': '5.0.0'
     },
     {
         'name' : 'any_to_tcp',
@@ -204,7 +223,7 @@ Like :ref:`setting-allow-notify-from`, except reading a sequence of `Subnet`_ fr
 Answer questions for the ANY type on UDP with a truncated packet that refers the remote server to TCP.
 Useful for mitigating ANY reflection attacks.
  ''',
-    }, 
+    },
     {
         'name' : 'allow_trust_anchor_query',
         'section' : 'recursor',
@@ -269,6 +288,7 @@ DNSSEC is not supported. Example:
     - zone: powerdns.com
       file: /var/zones/powerdns.com
  ''',
+        'runtime': ['reload-zones'],
     },
     {
         'name' : 'interval',
@@ -335,6 +355,7 @@ See :doc:`metrics`.
 Will send all available metrics to these servers via the carbon protocol, which is used by graphite and metronome.
 See :doc:`metrics`.
  ''',
+        'runtime': 'set-carbon-server',
     },
     {
         'name' : 'chroot',
@@ -381,6 +402,7 @@ EMPTY?  '''
         'section' : 'recursor',
         'type' : LType.String,
         'default' : 'SYSCONFDIR',
+        'docdefault': 'Determined by distribution',
         'help' : 'Location of configuration directory (recursor.conf or recursor.yml)',
         'doc' : '''
 Location of configuration directory (where ``recursor.conf`` or ``recursor.yml`` is stored).
@@ -424,7 +446,7 @@ These threads cannot be specified in this setting as their thread-ids are left u
         'doc' : '''
 Set CPU affinity for threads, asking the scheduler to run those threads on a single CPU, or a set of CPUs.
 This parameter accepts a space separated list of thread-id=cpu-id, or thread-id=cpu-id-1,cpu-id-2,...,cpu-id-N.
-For example, to make the worker thread 0 run on CPU id 0 and the worker thread 1 on CPUs 1 and 2::
+For example, to make the worker thread 0 run on CPU id 0 and the worker thread 1 on CPUs 1 and 2:
 
 .. code-block:: yaml
 
@@ -466,7 +488,8 @@ Any servers' name suffix-matching the supplied names will never be throttled.
 .. warning::
   Most servers on the internet do not respond for a good reason (overloaded or unreachable), ``dont-throttle-names`` could make this load on the upstream server even higher, resulting in further service degradation.
  ''',
-    'versionadded': '4.2.0'
+        'versionadded': '4.2.0',
+        'runtime': ['add-dont-throttle-names', 'clear-dont-throttle-names'],
     },
     {
         'name' : 'dont_throttle_netmasks',
@@ -485,7 +508,19 @@ In this case, ``dont-throttle-netmasks`` could be set to ``192.0.2.1``.
 .. warning::
   Most servers on the internet do not respond for a good reason (overloaded or unreachable), ``dont-throttle-netmasks`` could make this load on the upstream server even higher, resulting in further service degradation.
  ''',
-    'versionadded': '4.2.0'
+        'doc-new' : '''
+When an authoritative server does not answer a query or sends a reply the recursor does not like, it is throttled.
+Any servers matching the supplied netmasks will never be throttled.
+
+This can come in handy on lossy networks when forwarding, where the same server is configured multiple times (e.g. with ``forward_zones_recurse: [ {zone: example.com, forwarders: [ 192.0.2.1, 192.0.2.1 ] } ]``.
+By default, the PowerDNS Recursor would throttle the 'first' server on a timeout and hence not retry the 'second' one.
+In this case, :ref:`setting-dont-throttle-netmasks` could be set to include ``192.0.2.1``.
+
+.. warning::
+  Most servers on the internet do not respond for a good reason (overloaded or unreachable), ``dont-throttle-netmasks`` could make this load on the upstream server even higher, resulting in further service degradation.
+ ''',
+        'versionadded': '4.2.0',
+        'runtime': ['rec_control add-dont-throttle-netmasks', 'rec_control clear-dont-throttle-netmask'],
     },
     {
         'name' : 'devonly_regression_test_mode',
@@ -503,7 +538,7 @@ In this case, ``dont-throttle-netmasks`` could be set to ``192.0.2.1``.
         'default' : 'false',
         'help' : 'Disable packetcache',
         'doc' : '''
-Turn off the packet cache. Useful when running with Lua scripts that cannot be cached, though individual query caching can be controlled from Lua as well.
+Turn off the packet cache. Useful when running with Lua scripts that modify answers in such a way they cannot be cached, though individual answer caching can be controlled from Lua as well.
  ''',
     },
     {
@@ -511,9 +546,9 @@ Turn off the packet cache. Useful when running with Lua scripts that cannot be c
         'section' : 'logging',
         'type' : LType.Bool,
         'default' : 'false',
-        'help' : 'Disable logging to syslog, useful when running inside a supervisor that logs stdout',
+        'help' : 'Disable logging to syslog, useful when running inside a supervisor that logs stderr',
         'doc' : '''
-Do not log to syslog, only to stdout.
+Do not log to syslog, only to stderr.
 Use this setting when running inside a supervisor that handles logging (like systemd).
 **Note**: do not use this setting in combination with :ref:`setting-daemon` as all logging will disappear.
  ''',
@@ -664,6 +699,7 @@ On such systems not disabling some algorithms (or changing the security policy) 
 Log every DNSSEC validation failure.
 **Note**: This is not logged per-query but every time records are validated as Bogus.
  ''',
+        'runtime': 'set-dnssec-log-bogus',
     },
     {
         'name' : 'dont_query',
@@ -677,7 +713,7 @@ This can have odd effects, depending on your network, and may even be a security
 Therefore, the PowerDNS Recursor by default does not query private space IP addresses.
 This setting can be used to expand or reduce the limitations.
 
-Queries for names in forward zones and to addresses as configured in any of the settings :ref:`setting-forward-zones`, :ref:`setting-forward-zones-file` or :ref:`setting-forward-zones-recurse` are performed regardless of these limitations.
+Queries for names in forward zones and to addresses as configured in any of the settings :ref:`setting-forward-zones`, :ref:`setting-forward-zones-file` or :ref:`setting-forward-zones-recurse` are performed regardless of these limitations. However, if NS records are learned from :ref:`setting-forward-zones` and the IP addresses of the nameservers learned in that way are included in :ref:`setting-dont-query`, lookups relying on these nameservers will fail with SERVFAIL.
  ''',
     },
     {
@@ -707,7 +743,7 @@ This defaults to not using the requestor address inside RFC1918 and similar 'pri
         'doc' : '''
 Number of bits of client IPv4 address to pass when sending EDNS Client Subnet address information.
  ''',
-    'versionadded': '4.1.0'
+        'versionadded': '4.1.0',
     },
     {
         'name' : 'ipv4_cache_bits',
@@ -717,7 +753,7 @@ Number of bits of client IPv4 address to pass when sending EDNS Client Subnet ad
         'default' : '24',
         'help' : 'Maximum number of bits of IPv4 mask to cache ECS response',
         'doc' : '''
-Maximum number of bits of client IPv4 address used by the authoritative server (as indicated by the EDNS Client Subnet scope in the answer) for an answer to be inserted into the query cache. This condition applies in conjunction with ``ecs-cache-limit-ttl``.
+Maximum number of bits of client IPv4 address used by the authoritative server (as indicated by the EDNS Client Subnet scope in the answer) for an answer to be inserted into the record cache. This condition applies in conjunction with ``ecs-cache-limit-ttl``.
 That is, only if both the limits apply, the record will not be cached. This decision can be overridden by ``ecs-ipv4-never-cache`` and ``ecs-ipv6-never-cache``.
  ''',
     'versionadded': '4.1.12'
@@ -742,7 +778,7 @@ Number of bits of client IPv6 address to pass when sending EDNS Client Subnet ad
         'default' : '56',
         'help' : 'Maximum number of bits of IPv6 mask to cache ECS response',
         'doc' : '''
-Maximum number of bits of client IPv6 address used by the authoritative server (as indicated by the EDNS Client Subnet scope in the answer) for an answer to be inserted into the query cache. This condition applies in conjunction with ``ecs-cache-limit-ttl``.
+Maximum number of bits of client IPv6 address used by the authoritative server (as indicated by the EDNS Client Subnet scope in the answer) for an answer to be inserted into the record cache. This condition applies in conjunction with ``ecs-cache-limit-ttl``.
 That is, only if both the limits apply, the record will not be cached. This decision can be overridden by ``ecs-ipv4-never-cache`` and ``ecs-ipv6-never-cache``.
  ''',
     'versionadded': '4.1.12'
@@ -756,7 +792,7 @@ That is, only if both the limits apply, the record will not be cached. This deci
         'help' : 'If we should never cache IPv4 ECS responses',
         'doc' : '''
 When set, never cache replies carrying EDNS IPv4 Client Subnet scope in the record cache.
-In this case the decision made by ```ecs-ipv4-cache-bits`` and ``ecs-cache-limit-ttl`` is no longer relevant.
+In this case the decision made by ``ecs-ipv4-cache-bits`` and ``ecs-cache-limit-ttl`` is no longer relevant.
  ''',
     'versionadded': '4.5.0'
     },
@@ -769,7 +805,7 @@ In this case the decision made by ```ecs-ipv4-cache-bits`` and ``ecs-cache-limit
         'help' : 'If we should never cache IPv6 ECS responses',
         'doc' : '''
 When set, never cache replies carrying EDNS IPv6 Client Subnet scope in the record cache.
-In this case the decision made by ```ecs-ipv6-cache-bits`` and ``ecs-cache-limit-ttl`` is no longer relevant.
+In this case the decision made by ``ecs-ipv6-cache-bits`` and ``ecs-cache-limit-ttl`` is no longer relevant.
  ''',
     'versionadded': '4.5.0'
     },
@@ -785,9 +821,9 @@ This setting artificially raises the TTLs of records in the ANSWER section of EC
 Setting this to a value greater than 1 technically is an RFC violation, but might improve performance a lot.
 Using a value of 0 impacts performance of TTL 0 records greatly, since it forces the recursor to contact
 authoritative servers every time a client requests them.
-Can be set at runtime using ``rec_control set-ecs-minimum-ttl 3600``.
  ''',
-        'versionchanged': ('4.5.0', 'Old versions used default 0.')
+        'versionchanged': ('4.5.0', 'Old versions used default 0.'),
+        'runtime': 'set-ecs-minimum-ttl',
     },
     {
         'name' : 'cache_limit_ttl',
@@ -797,7 +833,7 @@ Can be set at runtime using ``rec_control set-ecs-minimum-ttl 3600``.
         'default' : '0',
         'help' : 'Minimum TTL to cache ECS response',
         'doc' : '''
-The minimum TTL for an ECS-specific answer to be inserted into the query cache. This condition applies in conjunction with ``ecs-ipv4-cache-bits`` or ``ecs-ipv6-cache-bits``.
+The minimum TTL for an ECS-specific answer to be inserted into the record cache. This condition applies in conjunction with ``ecs-ipv4-cache-bits`` or ``ecs-ipv6-cache-bits``.
 That is, only if both the limits apply, the record will not be cached. This decision can be overridden by ``ecs-ipv4-never-cache`` and ``ecs-ipv6-never-cache``.
  ''',
     'versionadded': '4.1.12'
@@ -840,13 +876,14 @@ Lower this if you experience timeouts.
     {
         'name' : 'edns_padding_from',
         'section' : 'incoming',
-        'type' : LType.String,
+        'type' : LType.ListSubnets,
         'default' : '',
         'help' : 'List of netmasks (proxy IP in case of proxy-protocol presence, client IP otherwise) for which EDNS padding will be enabled in responses, provided that \'edns-padding-mode\' applies',
         'doc' : '''
 List of netmasks (proxy IP in case of proxy-protocol presence, client IP otherwise) for which EDNS padding will be enabled in responses, provided that :ref:`setting-edns-padding-mode` applies.
  ''',
-    'versionadded': '4.5.0'
+        'versionadded' : '4.5.0',
+        'versionchanged' : ('5.0.5', 'YAML settings only: previously this was defined as a string instead of a sequence')
     },
     {
         'name' : 'edns_padding_mode',
@@ -880,7 +917,7 @@ Whether to add EDNS padding to outgoing DoT queries.
         'default' : '7830',
         'help' : 'Packetcache tag associated to responses sent with EDNS padding, to prevent sending these to clients for which padding is not enabled.',
         'doc' : '''
-The packetcache tag to use for padded responses, to prevent a client not allowed by the :ref::`setting-edns-padding-from` list to be served a cached answer generated for an allowed one. This
+The packetcache tag to use for padded responses, to prevent a client not allowed by the :ref:`setting-edns-padding-from` list to be served a cached answer generated for an allowed one. This
 effectively divides the packet cache in two when :ref:`setting-edns-padding-from` is used. Note that this will not override a tag set from one of the ``Lua`` hooks.
  ''',
     'versionadded': '4.5.0'
@@ -915,6 +952,19 @@ By default, this option is empty, meaning no EDNS Client Subnet information is s
     'versionadded': '4.5.0'
     },
     {
+        'name' : 'enable_old_settings',
+        'section' : 'recursor',
+        'type' : LType.Bool,
+        'default' : 'false',
+        'help' : 'Enable (deprecated) parsing of old-style settings',
+        'doc' : '''
+Enable the deprecated parsing of old-style settings.
+Only makes sense to set on the command line.
+        ''',
+        'skip-yaml': True,
+        'versionadded': '5.2.0',
+    },
+    {
         'name' : 'entropy_source',
         'section' : 'recursor',
         'type' : LType.String,
@@ -926,6 +976,8 @@ This is used for generating random numbers which are very hard to predict.
 Generally on UNIX platforms, this source will be ``/dev/urandom``, which will always supply random numbers, even if entropy is lacking.
 Change to ``/dev/random`` if PowerDNS should block waiting for enough entropy to arrive.
  ''',
+        'skip-yaml': True,
+        'versionchanged': ('4.9.0', 'This setting is no longer used.'),
     },
     {
         'name' : 'etc_hosts_file',
@@ -948,7 +1000,8 @@ This file can be used to serve data authoritatively using :ref:`setting-export-e
 Enable the recording and logging of ref:`event traces`. This is an experimental feature and subject to change.
 Possible values are 0: (disabled), 1 (add information to protobuf logging messages) and 2 (write to log) and 3 (both).
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'runtime': 'set-event-trace-enabled',
     },
     {
         'name' : 'export_etc_hosts',
@@ -976,12 +1029,13 @@ An entry called 'server1.home' will be stored as 'server1.home', regardless of t
         'name' : 'extended_resolution_errors',
         'section' : 'recursor',
         'type' : LType.Bool,
-        'default' : 'false',
+        'default' : 'true',
         'help' : 'If set, send an EDNS Extended Error extension on resolution failures, like DNSSEC validation errors',
         'doc' : '''
 If set, the recursor will add an EDNS Extended Error (:rfc:`8914`) to responses when resolution failed, like DNSSEC validation errors, explaining the reason it failed. This setting is not needed to allow setting custom error codes from Lua or from a RPZ hit.
  ''',
-    'versionadded': '4.5.0'
+        'versionadded': '4.5.0',
+        'versionchanged': ('5.0.0', 'Default changed to enabled, previously it was disabled.'),
     },
     {
         'name' : 'forward_zones',
@@ -1005,6 +1059,9 @@ Multiple IP addresses can be specified and port numbers other than 53 can be con
 Forwarded queries have the ``recursion desired (RD)`` bit set to ``0``, meaning that this setting is intended to forward queries to authoritative servers.
 If an ``NS`` record set for a subzone of the forwarded zone is learned, that record set will be used to determine addresses for name servers of the subzone.
 This allows e.g. a forward to a local authoritative server holding a copy of the root zone, delegations received from that server will work.
+
+**Note**: When an ``NS`` record for a subzone is learned and the IP address for that nameserver is included in the IP ranges in :ref:`setting-dont-query`,
+SERVFAIL is returned.
 
 **IMPORTANT**: When using DNSSEC validation (which is default), forwards to non-delegated (e.g. internal) zones that have a DNSSEC signed parent zone will validate as Bogus.
 To prevent this, add a Negative Trust Anchor (NTA) for this zone in the :ref:`setting-lua-config-file` with ``addNTA('your.zone', 'A comment')``.
@@ -1045,11 +1102,16 @@ Forwarded queries have the ``recursion desired (RD)`` bit set to ``0``, meaning 
 If an ``NS`` record set for a subzone of the forwarded zone is learned, that record set will be used to determine addresses for name servers of the subzone.
 This allows e.g. a forward to a local authoritative server holding a copy of the root zone, delegations received from that server will work.
 
+**Note**: When an ``NS`` record for a subzone is learned and the IP address for that nameserver is included in the IP ranges in :ref:`setting-dont-query`,
+SERVFAIL is returned.
+
 **IMPORTANT**: When using DNSSEC validation (which is default), forwards to non-delegated (e.g. internal) zones that have a DNSSEC signed parent zone will validate as Bogus.
 To prevent this, add a Negative Trust Anchor (NTA) for this zone in the :ref:`setting-lua-config-file` with ``addNTA('your.zone', 'A comment')``.
 If this forwarded zone is signed, instead of adding NTA, add the DS record to the :ref:`setting-lua-config-file`.
 See the :doc:`dnssec` information.
  ''',
+        'versionchanged' : ('5.2.0',  'Zones having ``notify_allowed`` set will be added to :ref:`setting-yaml-incoming.allow_notify_for`.'),
+        'runtime': ['reload-zones'],
     },
     {
         'name' : 'forward_zones_file',
@@ -1079,7 +1141,7 @@ The DNSSEC notes from :ref:`setting-forward-zones` apply here as well.
     forwarders:
     - 127.0.0.1
     - 127.0.0.1:5353
-    - '[::1]53'
+    - '[::1]:53'
   - zone: example2.com
     forwarders:
     - ::1
@@ -1090,6 +1152,7 @@ The DNSSEC notes from :ref:`setting-forward-zones` apply here as well.
  ''',
      'versionchanged': [('4.0.0', '(Old style settings only) Comments are allowed, everything behind ``#`` is ignored.'),
                         ('4.6.0', '(Old style settings only) Zones prefixed with a ``^`` are added to the :ref:`setting-allow-notify-for` list. Both prefix characters can be used if desired, in any order.')],
+        'runtime': ['reload-zones'],
     },
     {
         'name' : 'forward_zones_recurse',
@@ -1104,6 +1167,7 @@ This is because we rely on the forwarder to resolve the query fully.
 
 See :ref:`setting-forward-zones` for additional options (such as supplying multiple recursive servers) and an important note about DNSSEC.
  ''',
+        'runtime': ['reload-zones'],
     },
     {
         'name' : 'gettag_needs_edns_options',
@@ -1159,9 +1223,12 @@ Useful during upgrade testing.
         'section' : 'recursor',
         'type' : LType.String,
         'default' : '',
-        'help' : 'Include *.conf files from this directory',
+        'help' : 'Include settings files from this directory.',
         'doc' : '''
-Directory to scan for additional config files. All files that end with .conf are loaded in order using ``POSIX`` as locale.
+Directory to scan for additional config files. All files that end with ``.conf`` are loaded in order using ``POSIX`` as locale.
+ ''',
+        'doc-new' : '''
+Directory to scan for additional config files. All files that end with ``.yml`` are loaded in order using ``POSIX`` as locale.
  ''',
     },
     {
@@ -1196,6 +1263,24 @@ Examples::
   local-address=[::]:8053
   local-address=127.0.0.1:53, [::1]:5353
  ''',
+        'doc-new' : '''
+Local IP addresses to which we bind. Each address specified can
+include a port number; if no port is included then the
+:ref:`setting-local-port` port will be used for that address. If a
+port number is specified, it must be separated from the address with a
+':'; for an IPv6 address the address must be enclosed in square
+brackets.
+
+Example:
+
+.. code-block:: yaml
+
+  incoming:
+    listen:
+      - 127.0.0.1
+      - listen: '[::1]:5353'
+      - listen: '::'
+ ''',
     },
     {
         'name' : 'port',
@@ -1215,7 +1300,7 @@ If an address in :ref:`setting-local-address` does not have an explicit port, th
         'oldname' : 'log-timestamp',
         'type' : LType.Bool,
         'default' : 'true',
-        'help' : 'Print timestamps in log lines, useful to disable when running with a tool that timestamps stdout already',
+        'help' : 'Print timestamps in log lines, useful to disable when running with a tool that timestamps stderr already',
         'doc' : '''
 
  ''',
@@ -1309,6 +1394,16 @@ See :doc:`lua-config/index` for the options that can be set in this file.
  ''',
     },
     {
+        'name' : 'lua_global_include_dir',
+        'section' : 'recursor',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'More powerful configuration options',
+        'doc' : '''
+ When creating a Lua context, all ``*.lua`` files in the directory are loaded into the Lua context.
+ ''',
+    },
+    {
         'name' : 'lua_dns_script',
         'section' : 'recursor',
         'type' : LType.String,
@@ -1350,7 +1445,7 @@ In that case no probe will be scheduled.
 
 .. note::
   DoT probing is an experimental feature.
-  Please test thoroughly to determine if it is suitable in your specific production environment before enabling. 
+  Please test thoroughly to determine if it is suitable in your specific production environment before enabling.
  ''',
     'versionadded': '4.7.0'
     },
@@ -1377,6 +1472,7 @@ Maximum number of DNS record cache entries, shared by all threads since 4.4.0.
 Each entry associates a name and type with a record set.
 The size of the negative cache is 10% of this number.
  ''',
+        'runtime': 'set-max-cache-entries',
     },
     {
         'name' : 'max_ttl',
@@ -1404,6 +1500,21 @@ connection. This number must be larger than 0 and smaller than 65536
 and also smaller than `max-mthreads`.
  ''',
     'versionadded': '4.3.0'
+    },
+    {
+        'name': 'max_chain_length',
+        'section': 'recursor',
+        'type': LType.Uint64,
+        'default': '0',
+        'help': 'maximum number of queries that can be chained to an outgoing request, 0 is no limit',
+        'doc': '''
+The maximum number of queries that can be attached to an outgoing request chain. Attaching requests to a chain
+saves on outgoing queries, but the processing of a chain when the reply to the outgoing query comes in
+might result in a large outgoing traffic spike. Reducing the maximum chain length mitigates this.
+If this value is zero, no maximum is enforced, though the maximum number of mthreads (:ref:`setting-max-mthreads`)
+also limits the chain length.
+''',
+        'versionadded': '5.1.0'
     },
     {
         'name' : 'max_include_depth',
@@ -1438,7 +1549,7 @@ means unlimited.
         'default' : '2048',
         'help' : 'Maximum number of simultaneous Mtasker threads',
         'doc' : '''
-Maximum number of simultaneous MTasker threads.
+Maximum number of simultaneous MTasker threads, per worker thread.
  ''',
     },
     {
@@ -1451,23 +1562,59 @@ Maximum number of simultaneous MTasker threads.
         'doc' : '''
 Maximum number of Packet Cache entries. Sharded and shared by all threads since 4.9.0.
 ''',
+        'runtime': 'set-max-packetcache-entries',
     },
     {
         'name' : 'max_qperq',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
-        'default' : '60',
+        'default' : '50',
         'help' : 'Maximum outgoing queries per query',
         'doc' : '''
 The maximum number of outgoing queries that will be sent out during the resolution of a single client query.
-This is used to limit endlessly chasing CNAME redirections.
-If qname-minimization is enabled, the number will be forced to be 100
-at a minimum to allow for the extra queries qname-minimization generates when the cache is empty.
+This is used to avoid cycles resolving names.
  ''',
+        'versionchanged': ('5.1.0', 'The default used to be 60, with an extra allowance if qname minimization was enabled. Having better algorithms allows for a lower default limit.'),
+    },
+    {
+        'name' : 'max_cnames_followed',
+        'section' : 'recursor',
+        'type' : LType.Uint64,
+        'default' : '10',
+        'help' : 'Maximum number CNAME records followed',
+        'doc' : '''
+Maximum length of a CNAME chain. If a CNAME chain exceeds this length, a ``ServFail`` answer will be returned.
+Previously, this limit was fixed at 10.
+ ''',
+    'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'limit_qtype_any',
+        'section' : 'recordcache',
+        'type' : LType.Bool,
+        'default' : 'true',
+        'help' : 'Limit answers to ANY queries in size',
+        'doc' : '''
+Limit answers to ANY queries constructed from the record cache in size.
+Trying to retrieve more than :ref:`setting-max-rrset-size` records will result in a ``ServFail``',
+ ''',
+    'versionadded': ['4.9.9', '5.0.9', '5.1.2']
+    },
+    {
+        'name' : 'max_rrset_size',
+        'section' : 'recordcache',
+        'type' : LType.Uint64,
+        'default' : '256',
+        'help' : 'Maximum size of RRSet in cache',
+        'doc' : '''
+Maximum size of RRSets in cache.
+Trying to retrieve larger RRSets will result in a ``ServFail``.',
+ ''',
+    'versionadded': ['4.9.9', '5.0.9', '5.1.2']
     },
     {
         'name' : 'max_ns_address_qperq',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '10',
         'help' : 'Maximum outgoing NS address queries per query',
@@ -1478,14 +1625,14 @@ of a single client query. If IPv6 is enabled, an A and a AAAA query
 for a name counts as 1. If a zone publishes more than this number of
 NS records, the limit is further reduced for that zone by lowering
 it by the number of NS records found above the
-:ref:`setting-max-ns-address-qperq` value. The limit wil not be reduced to a
+:ref:`setting-max-ns-address-qperq` value. The limit will not be reduced to a
 number lower than 5.
  ''',
     'versionadded' : ['4.1.16', '4.2.2', '4.3.1']
     },
     {
         'name' : 'max_ns_per_resolve',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '13',
         'help' : 'Maximum number of NS records to consider to resolve a name, 0 is no limit',
@@ -1527,11 +1674,12 @@ If :ref:`setting-qname-minimization` is enabled, the fallback code in case of a 
         'name' : 'max_tcp_clients',
         'section' : 'incoming',
         'type' : LType.Uint64,
-        'default' : '128',
+        'default' : '1024',
         'help' : 'Maximum number of simultaneous TCP clients',
         'doc' : '''
 Maximum number of simultaneous incoming TCP connections allowed.
  ''',
+        'versionchanged': ('5.2.0', 'Before 5.2.0 the default was 128.'),
     },
     {
         'name' : 'max_tcp_per_client',
@@ -1541,7 +1689,7 @@ Maximum number of simultaneous incoming TCP connections allowed.
         'help' : 'If set, maximum number of TCP sessions per client (IP address)',
         'doc' : '''
 Maximum number of simultaneous incoming TCP connections allowed per client (remote IP address).
- 0 means unlimited.
+0 means unlimited.
  ''',
     },
     {
@@ -1593,9 +1741,9 @@ This setting artificially raises all TTLs to be at least this long.
 Setting this to a value greater than 1 technically is an RFC violation, but might improve performance a lot.
 Using a value of 0 impacts performance of TTL 0 records greatly, since it forces the recursor to contact
 authoritative servers each time a client requests them.
-Can be set at runtime using ``rec_control set-minimum-ttl 3600``.
  ''',
-     'versionchanged': ('4.5.0', 'Old versions used default 0.')
+        'versionchanged': ('4.5.0', 'Old versions used default 0.'),
+        'runtime': 'set-minimum-ttl',
     },
     {
         'name' : 'tracking',
@@ -1643,9 +1791,9 @@ recursor log file. The log line looks something like::
 If a domain is specified, then each time a newly observed domain is
 detected, the recursor will perform an A record lookup of '<newly
 observed domain>.<lookup domain>'. For example if 'new-domain-lookup'
-is configured as 'nod.powerdns.com', and a new domain 'xyz123.tv' is
+is configured as 'nod.powerdns.com', and a new domain 'example.com' is
 detected, then an A record lookup will be made for
-'xyz123.tv.nod.powerdns.com'. This feature gives a way to share the
+'example.com.nod.powerdns.com'. This feature gives a way to share the
 newly observed domain with partners, vendors or security teams. The
 result of the DNS lookup will be ignored by the recursor.
  ''',
@@ -1673,7 +1821,8 @@ have no effect unless you remove the existing files.
         'section' : 'nod',
         'oldname' : 'new-domain-history-dir',
         'type' : LType.String,
-        'default' : '/usr/local/var/lib/pdns-recursor/nod',
+        'default' : 'NODCACHEDIRNOD',
+        'docdefault': 'Determined by distribution',
         'help' : 'Persist new domain tracking data here to persist between restarts',
         'doc' : '''
 This setting controls which directory is used to store the on-disk
@@ -1691,6 +1840,19 @@ If you change the new-domain-db-size setting, you must remove any files
 from this directory.
  ''',
     'versionadded': '4.2.0'
+    },
+    {
+        'name' : 'db_snapshot_interval',
+        'section' : 'nod',
+        'oldname' : 'new-domain-db-snapshot-interval',
+        'type' : LType.Uint64,
+        'default' : '600',
+        'help' : 'Interval (in seconds) to write the NOD and UDR DB snapshots',
+        'doc' : '''
+Interval (in seconds) to write the NOD and UDR DB snapshots.
+Set to zero to disable snapshot writing.',
+ ''',
+    'versionadded': '5.1.0'
     },
     {
         'name' : 'whitelist',
@@ -1714,12 +1876,26 @@ from this directory.
         'doc' : '''
 This setting is a list of all domains (and implicitly all subdomains)
 that will never be considered a new domain. For example, if the domain
-'xyz123.tv' is in the list, then 'foo.bar.xyz123.tv' will never be
+'example.com' is in the list, then 'foo.bar.example.com' will never be
 considered a new domain. One use-case for the ignore list is to never
 reveal details of internal subdomains via the new-domain-lookup
 feature.
  ''',
     'versionadded': '4.5.0'
+    },
+    {
+        'name' : 'ignore_list_file',
+        'section' : 'nod',
+        'type' : LType.String,
+        'oldname' : 'new-domain-ignore-list-file',
+        'default' : '',
+        'help' : 'File with a list of domains (and implicitly all subdomains) which will never be considered a new domain',
+        'doc' : '''
+Path to a file with a list of domains. File should have one domain per line,
+with no extra characters or comments.
+See :ref:`setting-new-domain-ignore-list`.
+ ''',
+    'versionadded': '5.1.0'
     },
     {
         'name' : 'pb_tag',
@@ -1742,6 +1918,7 @@ a new domain is observed.
         'help' : 'Wait this number of milliseconds for network i/o',
         'doc' : '''
 Number of milliseconds to wait for a remote authoritative server to respond.
+If the number of concurrent requests is high, the :program:Recursor uses a lower value.
  ''',
     },
     {
@@ -1755,7 +1932,7 @@ Number of milliseconds to wait for a remote authoritative server to respond.
     },
     {
         'name' : 'non_resolving_ns_max_fails',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '5',
         'help' : 'Number of failed address resolves of a nameserver to start throttling it, 0 is disabled',
@@ -1767,7 +1944,7 @@ Nameservers matching :ref:`setting-dont-throttle-names` will not be throttled.
     },
     {
         'name' : 'non_resolving_ns_throttle_time',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '60',
         'help' : 'Number of seconds to throttle a nameserver with a name failing to resolve',
@@ -1810,14 +1987,92 @@ without consulting authoritative servers.
         'name' : 'nsec3_max_iterations',
         'section' : 'dnssec',
         'type' : LType.Uint64,
-        'default' : '150',
+        'default' : '50',
         'help' : 'Maximum number of iterations allowed for an NSEC3 record',
         'doc' : '''
 Maximum number of iterations allowed for an NSEC3 record.
-If an answer containing an NSEC3 record with more iterations is received, its DNSSEC validation status is treated as Insecure.
+If an answer containing an NSEC3 record with more iterations is received, its DNSSEC validation status is treated as ``Insecure``.
  ''',
         'versionadded': '4.1.0',
-        'versionchanged': ('4.5.2', 'Default is now 150, was 2500 before.')
+        'versionchanged': [('4.5.2', 'Default is now 150, was 2500 before.'),
+                           ('5.0.0', 'Default is now 50, was 150 before.')]
+    },
+    {
+        'name' : 'max_rrsigs_per_record',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '2',
+        'help' : 'Maximum number of RRSIGs to consider when validating a given record',
+        'doc' : '''
+Maximum number of RRSIGs we are willing to cryptographically check when validating a given record. Expired or not yet incepted RRSIGs do not count toward to this limit.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'max_nsec3s_per_record',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '10',
+        'help' : 'Maximum number of NSEC3s to consider when validating a given denial of existence',
+        'doc' : '''
+Maximum number of NSEC3s to consider when validating a given denial of existence.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'max_signature_validations_per_query',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '30',
+        'help' : 'Maximum number of RRSIG signatures we are willing to validate per incoming query',
+        'doc' : '''
+Maximum number of RRSIG signatures we are willing to validate per incoming query.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'max_nsec3_hash_computations_per_query',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '600',
+        'help' : 'Maximum number of NSEC3 hashes that we are willing to compute during DNSSEC validation, per incoming query',
+        'doc' : '''
+Maximum number of NSEC3 hashes that we are willing to compute during DNSSEC validation, per incoming query.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'aggressive_cache_max_nsec3_hash_cost',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '150',
+        'help' : 'Maximum estimated NSEC3 cost for a given query to consider aggressive use of the NSEC3 cache',
+        'doc' : '''
+Maximum estimated NSEC3 cost for a given query to consider aggressive use of the NSEC3 cache. The cost is estimated based on a heuristic taking the zone's NSEC3 salt and iterations parameters into account, as well at the number of labels of the requested name. For example a query for a name like a.b.c.d.e.f.example.com. in an example.com zone. secured with NSEC3 and 10 iterations (NSEC3 iterations count of 9) and an empty salt will have an estimated worst-case cost of 10 (iterations) * 6 (number of labels) = 60. The aggressive NSEC cache is an optimization to reduce the number of queries to authoritative servers, which is especially useful when a zone is under pseudo-random subdomain attack, and we want to skip it the zone parameters make it expensive.
+''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'max_ds_per_zone',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '8',
+        'help' : 'Maximum number of DS records to consider per zone',
+        'doc' : '''
+Maximum number of DS records to consider when validating records inside a zone.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
+    },
+    {
+        'name' : 'max_dnskeys',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '2',
+        'help' : 'Maximum number of DNSKEYs with the same algorithm and tag to consider when validating a given record',
+        'doc' : '''
+Maximum number of DNSKEYs with the same algorithm and tag to consider when validating a given record. Setting this value to 1 effectively denies DNSKEY tag collisions in a zone.
+ ''',
+        'versionadded': ['5.0.2', '4.9.3', '4.8.6'],
     },
     {
         'name' : 'ttl',
@@ -1913,9 +2168,9 @@ Whether to compute the latency of responses in protobuf messages using the times
     {
         'name' : 'proxy_protocol_from',
         'section' : 'incoming',
-        'type' : LType.String,
+        'type' : LType.ListSubnets,
         'default' : '',
-        'help' : 'A Proxy Protocol header is only allowed from these subnets',
+        'help' : 'A Proxy Protocol header is required from these subnets',
         'doc' : '''
 Ranges that are required to send a Proxy Protocol version 2 header in front of UDP and TCP queries, to pass the original source and destination addresses and ports to the recursor, as well as custom values.
 Queries that are not prefixed with such a header will not be accepted from clients in these ranges. Queries prefixed by headers from clients that are not listed in these ranges will be dropped.
@@ -1924,7 +2179,21 @@ Note that once a Proxy Protocol header has been received, the source address fro
 
 The dnsdist docs have `more information about the PROXY protocol <https://dnsdist.org/advanced/passing-source-address.html#proxy-protocol>`_.
  ''',
-    'versionadded': '4.4.0'
+        'versionadded' : '4.4.0',
+        'versionchanged' : ('5.0.5', 'YAML settings only: previously this was defined as a string instead of a sequence')
+    },
+    {
+        'name' : 'proxy_protocol_exceptions',
+        'section' : 'incoming',
+        'type' : LType.ListSocketAddresses,
+        'default' : '',
+        'help' : 'A Proxy Protocol header should not be used for these listen addresses.',
+        'doc' : '''
+If set, clients sending from an address in :ref:`setting-proxy-protocol-from` to a address:port listed here are excluded from using the Proxy Protocol.
+If no port is specified, port 53 is assumed.
+This is typically used to provide an easy to use address and port to send debug queries to.
+ ''',
+        'versionadded' : '5.1.0',
     },
     {
         'name' : 'proxy_protocol_maximum_size',
@@ -1993,6 +2262,10 @@ This value has precedence over :ref:`setting-qname-max-minimize-count`.
         'default' : '0.0.0.0',
         'help' : 'Source IP address for sending queries',
         'doc' : '''
+.. note::
+    While subnets and their negations are syntactically accepted, the handling of subnets has not been implemented yet.
+    Only individual IP addresses can be listed.
+
 Send out local queries from this address, or addresses. By adding multiple
 addresses, increased spoofing resilience is achieved. When no address of a certain
 address family is configured, there are *no* queries sent with that address family.
@@ -2096,6 +2369,8 @@ Specify which random number generator to use. Permissible choices are
  - urandom - Use ``/dev/urandom``
  - kiss - Use simple settable deterministic RNG. **FOR TESTING PURPOSES ONLY!**
  ''',
+        'skip-yaml': True,
+        'versionchanged': ('4.9.0', 'This setting is no longer used.')
     },
     {
         'name' : 'root_nx_trust',
@@ -2142,6 +2417,21 @@ Setting this to an empty string disables secpoll.
 This makes the server authoritatively aware of: ``10.in-addr.arpa``, ``168.192.in-addr.arpa``, ``16-31.172.in-addr.arpa``, which saves load on the AS112 servers.
 Individual parts of these zones can still be loaded or forwarded.
  ''',
+        'runtime': ['reload-zones'],
+    },
+    {
+        'name' : 'serve_rfc6303',
+        'section' : 'recursor',
+        'type' : LType.Bool,
+        'default' : 'true',
+        'help' : 'If we should be authoritative for RFC 6303 private IP space',
+        'doc' : '''
+This makes the server authoritatively aware of the zones in RFC 6303 not covered by RFC 1918.
+Individual parts of these zones can still be loaded or forwarded.
+:ref:`setting-serve-rfc1918` must be enabled for this option to take effect.
+''',
+        'versionadded': ['5.1.3', '5.2.0'],
+        'runtime': ['reload-zones'],
     },
     {
         'name' : 'serve_stale_extensions',
@@ -2160,7 +2450,7 @@ See :ref:`serve-stale` for a description of the Serve Stale mechanism.
     },
     {
         'name' : 'server_down_max_fails',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '64',
         'help' : 'Maximum number of consecutive timeouts (and unreachables) to mark a server as down ( 0 => disabled )',
@@ -2172,7 +2462,7 @@ Even a single response packet will drop the block.
     },
     {
         'name' : 'server_down_throttle_time',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '60',
         'help' : 'Number of seconds to throttle all queries to a server after being marked as down',
@@ -2182,7 +2472,7 @@ Throttle a server that has failed to respond :ref:`setting-server-down-max-fails
     },
     {
         'name' : 'bypass_server_throttling_probability',
-        'section' : 'recursor',
+        'section' : 'outgoing',
         'type' : LType.Uint64,
         'default' : '25',
         'help' : 'Determines the probability of a server marked down to be used anyway',
@@ -2222,7 +2512,7 @@ Query example (where 192.0.2.14 is your server):
         'help' : 'If set, change group id to this gid for more security',
         'doc' : '''
 PowerDNS can change its user and group id after binding to its socket.
-Can be used for better :doc:`security <security>`. 
+Can be used for better :doc:`security <security>`.
  '''
     },
     {
@@ -2315,6 +2605,7 @@ Where to store the control socket and pidfile.
 The default depends on ``LOCALSTATEDIR`` or the ``--with-socketdir`` setting when building (usually ``/var/run`` or ``/run``).
 
 When using :ref:`setting-chroot` the default becomes ``/``.
+The default value is overruled by the ``RUNTIME_DIRECTORY`` environment variable when that variable has a value (e.g. under systemd).
  ''',
     },
     {
@@ -2412,7 +2703,7 @@ Use 0 to disable.
         'section' : 'recursor',
         'type' : LType.ListStrings,
         'default' : 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-1, ecs-v4-response-bits-2, ecs-v4-response-bits-3, ecs-v4-response-bits-4, ecs-v4-response-bits-5, ecs-v4-response-bits-6, ecs-v4-response-bits-7, ecs-v4-response-bits-8, ecs-v4-response-bits-9, ecs-v4-response-bits-10, ecs-v4-response-bits-11, ecs-v4-response-bits-12, ecs-v4-response-bits-13, ecs-v4-response-bits-14, ecs-v4-response-bits-15, ecs-v4-response-bits-16, ecs-v4-response-bits-17, ecs-v4-response-bits-18, ecs-v4-response-bits-19, ecs-v4-response-bits-20, ecs-v4-response-bits-21, ecs-v4-response-bits-22, ecs-v4-response-bits-23, ecs-v4-response-bits-24, ecs-v4-response-bits-25, ecs-v4-response-bits-26, ecs-v4-response-bits-27, ecs-v4-response-bits-28, ecs-v4-response-bits-29, ecs-v4-response-bits-30, ecs-v4-response-bits-31, ecs-v4-response-bits-32, ecs-v6-response-bits-1, ecs-v6-response-bits-2, ecs-v6-response-bits-3, ecs-v6-response-bits-4, ecs-v6-response-bits-5, ecs-v6-response-bits-6, ecs-v6-response-bits-7, ecs-v6-response-bits-8, ecs-v6-response-bits-9, ecs-v6-response-bits-10, ecs-v6-response-bits-11, ecs-v6-response-bits-12, ecs-v6-response-bits-13, ecs-v6-response-bits-14, ecs-v6-response-bits-15, ecs-v6-response-bits-16, ecs-v6-response-bits-17, ecs-v6-response-bits-18, ecs-v6-response-bits-19, ecs-v6-response-bits-20, ecs-v6-response-bits-21, ecs-v6-response-bits-22, ecs-v6-response-bits-23, ecs-v6-response-bits-24, ecs-v6-response-bits-25, ecs-v6-response-bits-26, ecs-v6-response-bits-27, ecs-v6-response-bits-28, ecs-v6-response-bits-29, ecs-v6-response-bits-30, ecs-v6-response-bits-31, ecs-v6-response-bits-32, ecs-v6-response-bits-33, ecs-v6-response-bits-34, ecs-v6-response-bits-35, ecs-v6-response-bits-36, ecs-v6-response-bits-37, ecs-v6-response-bits-38, ecs-v6-response-bits-39, ecs-v6-response-bits-40, ecs-v6-response-bits-41, ecs-v6-response-bits-42, ecs-v6-response-bits-43, ecs-v6-response-bits-44, ecs-v6-response-bits-45, ecs-v6-response-bits-46, ecs-v6-response-bits-47, ecs-v6-response-bits-48, ecs-v6-response-bits-49, ecs-v6-response-bits-50, ecs-v6-response-bits-51, ecs-v6-response-bits-52, ecs-v6-response-bits-53, ecs-v6-response-bits-54, ecs-v6-response-bits-55, ecs-v6-response-bits-56, ecs-v6-response-bits-57, ecs-v6-response-bits-58, ecs-v6-response-bits-59, ecs-v6-response-bits-60, ecs-v6-response-bits-61, ecs-v6-response-bits-62, ecs-v6-response-bits-63, ecs-v6-response-bits-64, ecs-v6-response-bits-65, ecs-v6-response-bits-66, ecs-v6-response-bits-67, ecs-v6-response-bits-68, ecs-v6-response-bits-69, ecs-v6-response-bits-70, ecs-v6-response-bits-71, ecs-v6-response-bits-72, ecs-v6-response-bits-73, ecs-v6-response-bits-74, ecs-v6-response-bits-75, ecs-v6-response-bits-76, ecs-v6-response-bits-77, ecs-v6-response-bits-78, ecs-v6-response-bits-79, ecs-v6-response-bits-80, ecs-v6-response-bits-81, ecs-v6-response-bits-82, ecs-v6-response-bits-83, ecs-v6-response-bits-84, ecs-v6-response-bits-85, ecs-v6-response-bits-86, ecs-v6-response-bits-87, ecs-v6-response-bits-88, ecs-v6-response-bits-89, ecs-v6-response-bits-90, ecs-v6-response-bits-91, ecs-v6-response-bits-92, ecs-v6-response-bits-93, ecs-v6-response-bits-94, ecs-v6-response-bits-95, ecs-v6-response-bits-96, ecs-v6-response-bits-97, ecs-v6-response-bits-98, ecs-v6-response-bits-99, ecs-v6-response-bits-100, ecs-v6-response-bits-101, ecs-v6-response-bits-102, ecs-v6-response-bits-103, ecs-v6-response-bits-104, ecs-v6-response-bits-105, ecs-v6-response-bits-106, ecs-v6-response-bits-107, ecs-v6-response-bits-108, ecs-v6-response-bits-109, ecs-v6-response-bits-110, ecs-v6-response-bits-111, ecs-v6-response-bits-112, ecs-v6-response-bits-113, ecs-v6-response-bits-114, ecs-v6-response-bits-115, ecs-v6-response-bits-116, ecs-v6-response-bits-117, ecs-v6-response-bits-118, ecs-v6-response-bits-119, ecs-v6-response-bits-120, ecs-v6-response-bits-121, ecs-v6-response-bits-122, ecs-v6-response-bits-123, ecs-v6-response-bits-124, ecs-v6-response-bits-125, ecs-v6-response-bits-126, ecs-v6-response-bits-127, ecs-v6-response-bits-128',
-        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\*, ecs-v6-response-bits-\*',
+        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\\*, ecs-v6-response-bits-\\*',
         'help' : 'List of statistics that are disabled when retrieving the complete list of statistics via the API',
         'doc' : '''
 A list of comma-separated statistic names, that are disabled when retrieving the complete list of statistics via the API for performance reasons.
@@ -2441,7 +2732,7 @@ These statistics can still be retrieved individually by specifically asking for 
         'section' : 'recursor',
         'type' : LType.ListStrings,
         'default' : 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-1, ecs-v4-response-bits-2, ecs-v4-response-bits-3, ecs-v4-response-bits-4, ecs-v4-response-bits-5, ecs-v4-response-bits-6, ecs-v4-response-bits-7, ecs-v4-response-bits-8, ecs-v4-response-bits-9, ecs-v4-response-bits-10, ecs-v4-response-bits-11, ecs-v4-response-bits-12, ecs-v4-response-bits-13, ecs-v4-response-bits-14, ecs-v4-response-bits-15, ecs-v4-response-bits-16, ecs-v4-response-bits-17, ecs-v4-response-bits-18, ecs-v4-response-bits-19, ecs-v4-response-bits-20, ecs-v4-response-bits-21, ecs-v4-response-bits-22, ecs-v4-response-bits-23, ecs-v4-response-bits-24, ecs-v4-response-bits-25, ecs-v4-response-bits-26, ecs-v4-response-bits-27, ecs-v4-response-bits-28, ecs-v4-response-bits-29, ecs-v4-response-bits-30, ecs-v4-response-bits-31, ecs-v4-response-bits-32, ecs-v6-response-bits-1, ecs-v6-response-bits-2, ecs-v6-response-bits-3, ecs-v6-response-bits-4, ecs-v6-response-bits-5, ecs-v6-response-bits-6, ecs-v6-response-bits-7, ecs-v6-response-bits-8, ecs-v6-response-bits-9, ecs-v6-response-bits-10, ecs-v6-response-bits-11, ecs-v6-response-bits-12, ecs-v6-response-bits-13, ecs-v6-response-bits-14, ecs-v6-response-bits-15, ecs-v6-response-bits-16, ecs-v6-response-bits-17, ecs-v6-response-bits-18, ecs-v6-response-bits-19, ecs-v6-response-bits-20, ecs-v6-response-bits-21, ecs-v6-response-bits-22, ecs-v6-response-bits-23, ecs-v6-response-bits-24, ecs-v6-response-bits-25, ecs-v6-response-bits-26, ecs-v6-response-bits-27, ecs-v6-response-bits-28, ecs-v6-response-bits-29, ecs-v6-response-bits-30, ecs-v6-response-bits-31, ecs-v6-response-bits-32, ecs-v6-response-bits-33, ecs-v6-response-bits-34, ecs-v6-response-bits-35, ecs-v6-response-bits-36, ecs-v6-response-bits-37, ecs-v6-response-bits-38, ecs-v6-response-bits-39, ecs-v6-response-bits-40, ecs-v6-response-bits-41, ecs-v6-response-bits-42, ecs-v6-response-bits-43, ecs-v6-response-bits-44, ecs-v6-response-bits-45, ecs-v6-response-bits-46, ecs-v6-response-bits-47, ecs-v6-response-bits-48, ecs-v6-response-bits-49, ecs-v6-response-bits-50, ecs-v6-response-bits-51, ecs-v6-response-bits-52, ecs-v6-response-bits-53, ecs-v6-response-bits-54, ecs-v6-response-bits-55, ecs-v6-response-bits-56, ecs-v6-response-bits-57, ecs-v6-response-bits-58, ecs-v6-response-bits-59, ecs-v6-response-bits-60, ecs-v6-response-bits-61, ecs-v6-response-bits-62, ecs-v6-response-bits-63, ecs-v6-response-bits-64, ecs-v6-response-bits-65, ecs-v6-response-bits-66, ecs-v6-response-bits-67, ecs-v6-response-bits-68, ecs-v6-response-bits-69, ecs-v6-response-bits-70, ecs-v6-response-bits-71, ecs-v6-response-bits-72, ecs-v6-response-bits-73, ecs-v6-response-bits-74, ecs-v6-response-bits-75, ecs-v6-response-bits-76, ecs-v6-response-bits-77, ecs-v6-response-bits-78, ecs-v6-response-bits-79, ecs-v6-response-bits-80, ecs-v6-response-bits-81, ecs-v6-response-bits-82, ecs-v6-response-bits-83, ecs-v6-response-bits-84, ecs-v6-response-bits-85, ecs-v6-response-bits-86, ecs-v6-response-bits-87, ecs-v6-response-bits-88, ecs-v6-response-bits-89, ecs-v6-response-bits-90, ecs-v6-response-bits-91, ecs-v6-response-bits-92, ecs-v6-response-bits-93, ecs-v6-response-bits-94, ecs-v6-response-bits-95, ecs-v6-response-bits-96, ecs-v6-response-bits-97, ecs-v6-response-bits-98, ecs-v6-response-bits-99, ecs-v6-response-bits-100, ecs-v6-response-bits-101, ecs-v6-response-bits-102, ecs-v6-response-bits-103, ecs-v6-response-bits-104, ecs-v6-response-bits-105, ecs-v6-response-bits-106, ecs-v6-response-bits-107, ecs-v6-response-bits-108, ecs-v6-response-bits-109, ecs-v6-response-bits-110, ecs-v6-response-bits-111, ecs-v6-response-bits-112, ecs-v6-response-bits-113, ecs-v6-response-bits-114, ecs-v6-response-bits-115, ecs-v6-response-bits-116, ecs-v6-response-bits-117, ecs-v6-response-bits-118, ecs-v6-response-bits-119, ecs-v6-response-bits-120, ecs-v6-response-bits-121, ecs-v6-response-bits-122, ecs-v6-response-bits-123, ecs-v6-response-bits-124, ecs-v6-response-bits-125, ecs-v6-response-bits-126, ecs-v6-response-bits-127, ecs-v6-response-bits-128, cumul-clientanswers, cumul-authanswers, policy-hits, proxy-mapping-total, remote-logger-count',
-        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\*, ecs-v6-response-bits-\*, cumul-answers-\*, cumul-auth4answers-\*, cumul-auth6answers-\*',
+        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\\*, ecs-v6-response-bits-\\*, cumul-answers-\\*, cumul-auth4answers-\\*, cumul-auth6answers-\\*',
         'help' : 'List of statistics that are prevented from being exported via Carbon',
         'doc' : '''
 A list of comma-separated statistic names, that are prevented from being exported via carbon for performance reasons.
@@ -2468,7 +2759,7 @@ A sequence of statistic names, that are prevented from being exported via carbon
         'section' : 'recursor',
         'type' : LType.ListStrings,
         'default' : 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-1, ecs-v4-response-bits-2, ecs-v4-response-bits-3, ecs-v4-response-bits-4, ecs-v4-response-bits-5, ecs-v4-response-bits-6, ecs-v4-response-bits-7, ecs-v4-response-bits-8, ecs-v4-response-bits-9, ecs-v4-response-bits-10, ecs-v4-response-bits-11, ecs-v4-response-bits-12, ecs-v4-response-bits-13, ecs-v4-response-bits-14, ecs-v4-response-bits-15, ecs-v4-response-bits-16, ecs-v4-response-bits-17, ecs-v4-response-bits-18, ecs-v4-response-bits-19, ecs-v4-response-bits-20, ecs-v4-response-bits-21, ecs-v4-response-bits-22, ecs-v4-response-bits-23, ecs-v4-response-bits-24, ecs-v4-response-bits-25, ecs-v4-response-bits-26, ecs-v4-response-bits-27, ecs-v4-response-bits-28, ecs-v4-response-bits-29, ecs-v4-response-bits-30, ecs-v4-response-bits-31, ecs-v4-response-bits-32, ecs-v6-response-bits-1, ecs-v6-response-bits-2, ecs-v6-response-bits-3, ecs-v6-response-bits-4, ecs-v6-response-bits-5, ecs-v6-response-bits-6, ecs-v6-response-bits-7, ecs-v6-response-bits-8, ecs-v6-response-bits-9, ecs-v6-response-bits-10, ecs-v6-response-bits-11, ecs-v6-response-bits-12, ecs-v6-response-bits-13, ecs-v6-response-bits-14, ecs-v6-response-bits-15, ecs-v6-response-bits-16, ecs-v6-response-bits-17, ecs-v6-response-bits-18, ecs-v6-response-bits-19, ecs-v6-response-bits-20, ecs-v6-response-bits-21, ecs-v6-response-bits-22, ecs-v6-response-bits-23, ecs-v6-response-bits-24, ecs-v6-response-bits-25, ecs-v6-response-bits-26, ecs-v6-response-bits-27, ecs-v6-response-bits-28, ecs-v6-response-bits-29, ecs-v6-response-bits-30, ecs-v6-response-bits-31, ecs-v6-response-bits-32, ecs-v6-response-bits-33, ecs-v6-response-bits-34, ecs-v6-response-bits-35, ecs-v6-response-bits-36, ecs-v6-response-bits-37, ecs-v6-response-bits-38, ecs-v6-response-bits-39, ecs-v6-response-bits-40, ecs-v6-response-bits-41, ecs-v6-response-bits-42, ecs-v6-response-bits-43, ecs-v6-response-bits-44, ecs-v6-response-bits-45, ecs-v6-response-bits-46, ecs-v6-response-bits-47, ecs-v6-response-bits-48, ecs-v6-response-bits-49, ecs-v6-response-bits-50, ecs-v6-response-bits-51, ecs-v6-response-bits-52, ecs-v6-response-bits-53, ecs-v6-response-bits-54, ecs-v6-response-bits-55, ecs-v6-response-bits-56, ecs-v6-response-bits-57, ecs-v6-response-bits-58, ecs-v6-response-bits-59, ecs-v6-response-bits-60, ecs-v6-response-bits-61, ecs-v6-response-bits-62, ecs-v6-response-bits-63, ecs-v6-response-bits-64, ecs-v6-response-bits-65, ecs-v6-response-bits-66, ecs-v6-response-bits-67, ecs-v6-response-bits-68, ecs-v6-response-bits-69, ecs-v6-response-bits-70, ecs-v6-response-bits-71, ecs-v6-response-bits-72, ecs-v6-response-bits-73, ecs-v6-response-bits-74, ecs-v6-response-bits-75, ecs-v6-response-bits-76, ecs-v6-response-bits-77, ecs-v6-response-bits-78, ecs-v6-response-bits-79, ecs-v6-response-bits-80, ecs-v6-response-bits-81, ecs-v6-response-bits-82, ecs-v6-response-bits-83, ecs-v6-response-bits-84, ecs-v6-response-bits-85, ecs-v6-response-bits-86, ecs-v6-response-bits-87, ecs-v6-response-bits-88, ecs-v6-response-bits-89, ecs-v6-response-bits-90, ecs-v6-response-bits-91, ecs-v6-response-bits-92, ecs-v6-response-bits-93, ecs-v6-response-bits-94, ecs-v6-response-bits-95, ecs-v6-response-bits-96, ecs-v6-response-bits-97, ecs-v6-response-bits-98, ecs-v6-response-bits-99, ecs-v6-response-bits-100, ecs-v6-response-bits-101, ecs-v6-response-bits-102, ecs-v6-response-bits-103, ecs-v6-response-bits-104, ecs-v6-response-bits-105, ecs-v6-response-bits-106, ecs-v6-response-bits-107, ecs-v6-response-bits-108, ecs-v6-response-bits-109, ecs-v6-response-bits-110, ecs-v6-response-bits-111, ecs-v6-response-bits-112, ecs-v6-response-bits-113, ecs-v6-response-bits-114, ecs-v6-response-bits-115, ecs-v6-response-bits-116, ecs-v6-response-bits-117, ecs-v6-response-bits-118, ecs-v6-response-bits-119, ecs-v6-response-bits-120, ecs-v6-response-bits-121, ecs-v6-response-bits-122, ecs-v6-response-bits-123, ecs-v6-response-bits-124, ecs-v6-response-bits-125, ecs-v6-response-bits-126, ecs-v6-response-bits-127, ecs-v6-response-bits-128, cumul-clientanswers, cumul-authanswers, policy-hits, proxy-mapping-total, remote-logger-count',
-        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\*, ecs-v6-response-bits-\*, cumul-answers-\*, cumul-auth4answers-\*, cumul-auth6answers-\*',
+        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\\*, ecs-v6-response-bits-\\*, cumul-answers-\\*, cumul-auth4answers-\\*, cumul-auth6answers-\\*',
         'help' : 'List of statistics that are prevented from being exported via rec_control get-all',
         'doc' : '''
 A list of comma-separated statistic names, that are disabled when retrieving the complete list of statistics via `rec_control get-all`, for performance reasons.
@@ -2508,7 +2799,7 @@ Can be read out using ``rec_control top-remotes``.
         'section' : 'recursor',
         'type' : LType.ListStrings,
         'default' : 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-1, ecs-v4-response-bits-2, ecs-v4-response-bits-3, ecs-v4-response-bits-4, ecs-v4-response-bits-5, ecs-v4-response-bits-6, ecs-v4-response-bits-7, ecs-v4-response-bits-8, ecs-v4-response-bits-9, ecs-v4-response-bits-10, ecs-v4-response-bits-11, ecs-v4-response-bits-12, ecs-v4-response-bits-13, ecs-v4-response-bits-14, ecs-v4-response-bits-15, ecs-v4-response-bits-16, ecs-v4-response-bits-17, ecs-v4-response-bits-18, ecs-v4-response-bits-19, ecs-v4-response-bits-20, ecs-v4-response-bits-21, ecs-v4-response-bits-22, ecs-v4-response-bits-23, ecs-v4-response-bits-24, ecs-v4-response-bits-25, ecs-v4-response-bits-26, ecs-v4-response-bits-27, ecs-v4-response-bits-28, ecs-v4-response-bits-29, ecs-v4-response-bits-30, ecs-v4-response-bits-31, ecs-v4-response-bits-32, ecs-v6-response-bits-1, ecs-v6-response-bits-2, ecs-v6-response-bits-3, ecs-v6-response-bits-4, ecs-v6-response-bits-5, ecs-v6-response-bits-6, ecs-v6-response-bits-7, ecs-v6-response-bits-8, ecs-v6-response-bits-9, ecs-v6-response-bits-10, ecs-v6-response-bits-11, ecs-v6-response-bits-12, ecs-v6-response-bits-13, ecs-v6-response-bits-14, ecs-v6-response-bits-15, ecs-v6-response-bits-16, ecs-v6-response-bits-17, ecs-v6-response-bits-18, ecs-v6-response-bits-19, ecs-v6-response-bits-20, ecs-v6-response-bits-21, ecs-v6-response-bits-22, ecs-v6-response-bits-23, ecs-v6-response-bits-24, ecs-v6-response-bits-25, ecs-v6-response-bits-26, ecs-v6-response-bits-27, ecs-v6-response-bits-28, ecs-v6-response-bits-29, ecs-v6-response-bits-30, ecs-v6-response-bits-31, ecs-v6-response-bits-32, ecs-v6-response-bits-33, ecs-v6-response-bits-34, ecs-v6-response-bits-35, ecs-v6-response-bits-36, ecs-v6-response-bits-37, ecs-v6-response-bits-38, ecs-v6-response-bits-39, ecs-v6-response-bits-40, ecs-v6-response-bits-41, ecs-v6-response-bits-42, ecs-v6-response-bits-43, ecs-v6-response-bits-44, ecs-v6-response-bits-45, ecs-v6-response-bits-46, ecs-v6-response-bits-47, ecs-v6-response-bits-48, ecs-v6-response-bits-49, ecs-v6-response-bits-50, ecs-v6-response-bits-51, ecs-v6-response-bits-52, ecs-v6-response-bits-53, ecs-v6-response-bits-54, ecs-v6-response-bits-55, ecs-v6-response-bits-56, ecs-v6-response-bits-57, ecs-v6-response-bits-58, ecs-v6-response-bits-59, ecs-v6-response-bits-60, ecs-v6-response-bits-61, ecs-v6-response-bits-62, ecs-v6-response-bits-63, ecs-v6-response-bits-64, ecs-v6-response-bits-65, ecs-v6-response-bits-66, ecs-v6-response-bits-67, ecs-v6-response-bits-68, ecs-v6-response-bits-69, ecs-v6-response-bits-70, ecs-v6-response-bits-71, ecs-v6-response-bits-72, ecs-v6-response-bits-73, ecs-v6-response-bits-74, ecs-v6-response-bits-75, ecs-v6-response-bits-76, ecs-v6-response-bits-77, ecs-v6-response-bits-78, ecs-v6-response-bits-79, ecs-v6-response-bits-80, ecs-v6-response-bits-81, ecs-v6-response-bits-82, ecs-v6-response-bits-83, ecs-v6-response-bits-84, ecs-v6-response-bits-85, ecs-v6-response-bits-86, ecs-v6-response-bits-87, ecs-v6-response-bits-88, ecs-v6-response-bits-89, ecs-v6-response-bits-90, ecs-v6-response-bits-91, ecs-v6-response-bits-92, ecs-v6-response-bits-93, ecs-v6-response-bits-94, ecs-v6-response-bits-95, ecs-v6-response-bits-96, ecs-v6-response-bits-97, ecs-v6-response-bits-98, ecs-v6-response-bits-99, ecs-v6-response-bits-100, ecs-v6-response-bits-101, ecs-v6-response-bits-102, ecs-v6-response-bits-103, ecs-v6-response-bits-104, ecs-v6-response-bits-105, ecs-v6-response-bits-106, ecs-v6-response-bits-107, ecs-v6-response-bits-108, ecs-v6-response-bits-109, ecs-v6-response-bits-110, ecs-v6-response-bits-111, ecs-v6-response-bits-112, ecs-v6-response-bits-113, ecs-v6-response-bits-114, ecs-v6-response-bits-115, ecs-v6-response-bits-116, ecs-v6-response-bits-117, ecs-v6-response-bits-118, ecs-v6-response-bits-119, ecs-v6-response-bits-120, ecs-v6-response-bits-121, ecs-v6-response-bits-122, ecs-v6-response-bits-123, ecs-v6-response-bits-124, ecs-v6-response-bits-125, ecs-v6-response-bits-126, ecs-v6-response-bits-127, ecs-v6-response-bits-128, cumul-clientanswers, cumul-authanswers, policy-hits, proxy-mapping-total, remote-logger-count',
-        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\*, ecs-v6-response-bits-\*',
+        'docdefault': 'cache-bytes, packetcache-bytes, special-memory-usage, ecs-v4-response-bits-\\*, ecs-v6-response-bits-\\*',
         'help' : 'List of statistics that are prevented from being exported via SNMP',
         'doc' : '''
 A list of comma-separated statistic names, that are prevented from being exported via SNMP, for performance reasons.
@@ -2527,7 +2818,9 @@ A sequence of statistic names, that are prevented from being exported via SNMP, 
         'doc' : '''
 Prefer structured logging when both an old style and a structured log messages is available.
  ''',
-    'versionadded': '4.6.0'
+        'versionadded': '4.6.0',
+        'versionchanged': ('5.0.0', 'Disabling structured logging is deprecated'),
+        'versionchanged': ('5.1.0', 'Disabling structured logging is not supported'),
     },
     {
         'name' : 'structured_logging_backend',
@@ -2543,8 +2836,12 @@ Available backends are:
 - ``default``: use the traditional logging system to output structured logging information.
 - ``systemd-journal``: use systemd-journal.
   When using this backend, provide ``-o verbose`` or simular output option to ``journalctl`` to view the full information.
+- ``json``: JSON objects are written to the standard error stream.
+
+See :doc:`appendices/structuredlogging` for more details.
  ''',
-    'versionadded': '4.8.0'
+        'versionadded': '4.8.0',
+        'versionchanged': ('5.1.0', 'The JSON backend was added')
     },
     {
         'name' : 'tcp_fast_open',
@@ -2684,11 +2981,11 @@ See :ref:`setting-udp-source-port-min`.
         'name' : 'udp_source_port_avoid',
         'section' : 'outgoing',
         'type' : LType.ListStrings,
-        'default' : '11211',
-        'help' : 'List of comma separated UDP port number to avoid',
+        'default' : '4791,11211',
+        'help' : 'List of comma separated UDP port numbers to avoid',
         'doc' : '''
 A list of comma-separated UDP port numbers to avoid when binding.
-Ex: `5300,11211`
+Ex: `4791,5300,11211`
 
 See :ref:`setting-udp-source-port-min`.
  ''',
@@ -2699,12 +2996,14 @@ A sequence of UDP port numbers to avoid when binding. For example:
 
  outgoing:
    udp_source_port_avoid:
+   - 4791
    - 5300
    - 11211
 
 See :ref:`setting-udp-source-port-min`.
  ''',
-    'versionadded': '4.2.0'
+        'versionadded': '4.2.0',
+        'versionchanged': ('5.2.0', 'port 4791 was added to the default list'),
     },
     {
         'name' : 'udp_truncation_threshold',
@@ -2777,7 +3076,8 @@ have no effect unless you remove the existing files.
         'name' : 'unique_response_history_dir',
         'section' : 'nod',
         'type' : LType.String,
-        'default' : '/usr/local/var/lib/pdns-recursor/udr',
+        'default' : 'NODCACHEDIRUDR',
+        'docdefault': 'Determined by distribution',
         'help' : 'Persist unique response tracking data here to persist between restarts',
         'doc' : '''
 This setting controls which directory is used to store the on-disk
@@ -2806,6 +3106,33 @@ If protobuf is configured, then this tag will be added to all protobuf response 
 a unique DNS response is observed.
  ''',
     'versionadded': '4.2.0'
+    },
+    {
+        'name' : 'unique_response_ignore_list',
+        'section' : 'nod',
+        'type' : LType.ListStrings,
+        'default' : '',
+        'help' : 'List of domains (and implicitly all subdomains) which will never be considered for UDR',
+        'doc' : '''
+This setting is a list of all domains (and implicitly all subdomains)
+that will never be considered for new unique domain responses.
+For example, if the domain 'example.com' is in the list, then 'foo.bar.example.com'
+will never be considered for a new unique domain response.
+''',
+        'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'unique_response_ignore_list_file',
+        'section' : 'nod',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'File with list of domains (and implicitly all subdomains) which will never be considered for UDR',
+        'doc' : '''
+Path to a file with a list of domains. File should have one domain per line,
+with no extra characters or comments.
+See :ref:`setting-unique-response-ignore-list`.
+''',
+        'versionadded': '5.1.0'
     },
     {
         'name' : 'use_incoming_edns_subnet',
@@ -2895,7 +3222,7 @@ Note that this option only applies to credentials stored in the configuration as
         'default' : 'normal',
         'help' : 'Amount of logging in the webserver (none, normal, detailed)',
         'doc' : '''
-One of ``one``, ``normal``, ``detailed``.
+One of ``none``, ``normal``, ``detailed``.
 The amount of logging the webserver must do. 'none' means no useful webserver information will be logged.
 When set to 'normal', the webserver will log a line per request that should be familiar::
 
@@ -2977,5 +3304,283 @@ The names are suffix-matched.
 This can be used to not count known failing (test) name validations in the ordinary DNSSEC metrics.
  ''',
     'versionadded': '4.5.0'
+    },
+    {
+        'name' : 'system_resolver_ttl',
+        'section' : 'recursor',
+        'type' : LType.Uint64,
+        'default' : '0',
+        'help' : 'Set TTL of system resolver feature, 0 (default) is disabled',
+        'doc' : '''
+Sets TTL in seconds of the system resolver feature.
+If not equal to zero names can be used for forwarding targets.
+The names will be resolved by the system resolver configured in the OS.
+
+The TTL is used as a time to live to see if the names used in forwarding resolve to a different address than before.
+If the TTL is expired, a re-resolve will be done by the next iteration of the check function;
+if a change is detected, the recursor performs an equivalent of ``rec_control reload-zones``.
+
+Make sure the recursor itself is not used by the system resolver! Default is 0 (not enabled).
+A suggested value is 60.
+''',
+    'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'system_resolver_interval',
+        'section' : 'recursor',
+        'type' : LType.Uint64,
+        'default' : '0',
+        'help' : 'Set interval (in seconds) of the re-resolve checks of system resolver subsystem.',
+        'doc' : '''
+Sets the check interval (in seconds) of the system resolver feature.
+All names known by the system resolver subsystem are periodically checked for changing values.
+
+If the TTL of a name has expired, it is checked by re-resolving it.
+if a change is detected, the recursor performs an equivalent of ``rec_control reload-zones``.
+
+This settings sets the interval between the checks.
+If set to zero (the default), the value :ref:`setting-system-resolver-ttl` is used.
+''',
+    'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'system_resolver_self_resolve_check',
+        'section' : 'recursor',
+        'type' : LType.Bool,
+        'default' : 'true',
+        'help' : 'Check for potential self-resolve, default enabled.',
+        'doc' : '''
+Warn on potential self-resolve.
+If this check draws the wrong conclusion, you can disable it.
+''',
+        'versionadded': '5.1.0'
+    },
+    {
+        'name' : 'trustanchors',
+        'section' : 'dnssec',
+        'type' : LType.ListTrustAnchors,
+        'default' : '[{name: ., dsrecords: [\'20326 8 2 e06d44b80b8f1d39a95c0b0d7c65d08458e880409bbc683457104237c7f8ec8d\', \'38696 8 2 683d2d0acb8c9b712a1948b27f741219298d0a450d612c483af444a4c0fb2b16\']}]',
+        'docdefault' : '''
+
+.. code-block:: yaml
+
+   - name: .
+     dsrecords:
+     - 20326 8 2 e06d44b80b8f1d39a95c0b0d7c65d08458e880409bbc683457104237c7f8ec8d
+     - 38696 8 2 683d2d0acb8c9b712a1948b27f741219298d0a450d612c483af444a4c0fb2b16
+
+''',
+        'help' : 'Sequence of trust anchors',
+        'doc' : '''
+Sequence of trust anchors. If the sequence contains an entry for the root zone, the default root zone trust anchor is not included.
+If a zone appears multiple times, the entries in ``dsrecords`` are merged.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+        'runtime': ['add-ta', 'clear-ta', 'reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'negative_trustanchors',
+        'section' : 'dnssec',
+        'type' : LType.ListNegativeTrustAnchors,
+        'default' : '',
+        'help' : 'A sequence of negative trust anchors',
+        'doc' : '''
+Sequence of negative trust anchors.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+        'runtime': ['add-nta', 'clear-nta', 'reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'trustanchorfile',
+        'section' : 'dnssec',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'A path to a zone file containing trust anchors',
+        'doc' : '''
+A path to a zone file to read trust anchors from.
+This can be used to read distribution provided trust anchors, as for instance ``/usr/share/dns/root.key`` from Debian's ``dns-root-data`` package.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'trustanchorfile_interval',
+        'section' : 'dnssec',
+        'type' : LType.Uint64,
+        'default' : '24',
+        'help' : 'Interval (in hours) to read the trust anchors file',
+        'doc' : '''
+Interval (in hours) to re-read the ``trustanchorfile``.  Zero disables periodic re-reads.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/dnssec`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'protobuf_servers',
+        'section' : 'logging',
+        'type' : LType.ListProtobufServers,
+        'default' : '',
+        'help' : 'Sequence of protobuf servers',
+        'doc' : '''
+Sequence of outgoing protobuf servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'outgoing_protobuf_servers',
+        'section' : 'logging',
+        'type' : LType.ListProtobufServers,
+        'default' : '',
+        'help' : 'List of outgoing protobuf servers',
+        'doc' : '''
+Sequence of outgoing protobuf servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'protobuf_mask_v4',
+        'section' : 'logging',
+        'type' : LType.Uint64,
+        'default' : '32',
+        'help' : 'Network mask to apply for client IPv4 addresses in protobuf messages',
+        'doc' : '''
+Network mask to apply to the client IPv4 addresses, for anonymization purposes. The default of 32 means no anonymization.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'protobuf_mask_v6',
+        'section' : 'logging',
+        'type' : LType.Uint64,
+        'default' : '128',
+        'help' : 'Network mask to apply for client IPv6 addresses in protobuf messages',
+        'doc' : '''
+Network mask to apply to the client IPv6 addresses, for anonymization purposes. The default of 128 means no anonymization.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'dnstap_framestream_servers',
+        'section' : 'logging',
+        'type' : LType.ListDNSTapFrameStreamServers,
+        'default' : '',
+        'help' : 'Sequence of dnstap servers',
+        'doc' : '''
+Sequence of dnstap servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'dnstap_nod_framestream_servers',
+        'section' : 'logging',
+        'type' : LType.ListDNSTapNODFrameStreamServers,
+        'default' : '',
+        'help' : 'Sequence of NOD dnstap servers',
+        'doc' : '''
+Sequence of NOD dnstap servers. Currently the maximum size of this list is one.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/protobuf`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'sortlists',
+        'section' : 'recursor',
+        'type' : LType.ListSortLists,
+        'default' : '',
+        'help' : 'Sequence of sort lists',
+        'doc' : '''
+Sequence of sort lists.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/sortlist`',
+        'versionadded': '5.1.0',
+    },
+    {
+        'name' : 'rpzs',
+        'section' : 'recursor',
+        'type' : LType.ListRPZs,
+        'default' : '',
+        'help' : 'Sequence of RPZ entries',
+        'doc' : '''
+Sequence of RPZ entries.
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/rpz`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'zonetocaches',
+        'section' : 'recordcache',
+        'type' : LType.ListZoneToCaches,
+        'default' : '',
+        'help' : 'Sequence of ZoneToCache entries ',
+        'doc' : '''
+Sequence of ZoneToCache entries
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/ztc`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'allowed_additional_qtypes',
+        'section' : 'recursor',
+        'type' : LType.ListAllowedAdditionalQTypes,
+        'default' : '',
+        'help' : 'Sequence of AllowedAdditionalQType',
+        'doc' : '''
+Sequence of AllowedAdditionalQType
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/additionals`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'proxymappings',
+        'section' : 'incoming',
+        'type' : LType.ListProxyMappings,
+        'default' : '',
+        'help' : 'Sequence of ProxyMapping',
+        'doc' : '''
+Sequence of ProxyMapping
+        ''',
+        'skip-old' : 'Equivalent Lua config in :doc:`lua-config/proxymapping`',
+        'versionadded': '5.1.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
+    },
+    {
+        'name' : 'lua_start_stop_script',
+        'section' : 'recursor',
+        'type' : LType.String,
+        'default' : '',
+        'help' : 'Lua script containing functions to run on startup and shutdown',
+        'doc' : '''
+Load this Lua script on startup and shutdown and run the Lua function ``on_recursor_start`` on startup and the Lua function ``on_recursor_stop`` on a ``nice`` shutdown (using ``rec_control quit-nicely`` of the :program:`Recursor` process.
+        ''',
+        'skip-old' : 'No equivalent old-style setting',
+        'versionadded': '5.2.0',
+    },
+    {
+        'name' : 'forwarding_catalog_zones',
+        'section' : 'recursor',
+        'type' : LType.ListForwardingCatalogZones,
+        'default' : '',
+        'help' : 'Sequence of ForwardingCatalogZone',
+        'doc' : '''
+Sequence of ForwardingCatalogZone
+        ''',
+        'skip-old' : 'No equivalent old style setting',
+        'versionadded': '5.2.0',
+        'runtime': ['reload-lua-config', 'reload-yaml'],
     },
 ]

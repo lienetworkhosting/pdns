@@ -46,7 +46,17 @@
 class DNSName;
 
 // Do not change to "using TSIGHashEnum ..." until you know CodeQL does not choke on it
-typedef enum { TSIG_MD5, TSIG_SHA1, TSIG_SHA224, TSIG_SHA256, TSIG_SHA384, TSIG_SHA512, TSIG_GSS } TSIGHashEnum;
+typedef enum
+{
+  TSIG_MD5,
+  TSIG_SHA1,
+  TSIG_SHA224,
+  TSIG_SHA256,
+  TSIG_SHA384,
+  TSIG_SHA512,
+  TSIG_GSS,
+} TSIGHashEnum;
+
 namespace pdns
 {
 /**
@@ -99,6 +109,7 @@ bool getTSIGHashEnum(const DNSName& algoName, TSIGHashEnum& algoEnum);
 DNSName getTSIGAlgoName(TSIGHashEnum& algoEnum);
 
 int logFacilityToLOG(unsigned int facility);
+std::optional<int> logFacilityFromString(std::string facilityStr);
 
 template<typename Container>
 void
@@ -131,9 +142,8 @@ stringtok (Container &container, string const &in,
 
 template<typename T> bool rfc1982LessThan(T a, T b)
 {
-  static_assert(std::is_unsigned<T>::value, "rfc1982LessThan only works for unsigned types");
-  typedef typename std::make_signed<T>::type signed_t;
-  return static_cast<signed_t>(a - b) < 0;
+  static_assert(std::is_unsigned_v<T>, "rfc1982LessThan only works for unsigned types");
+  return std::make_signed_t<T>(a - b) < 0;
 }
 
 // fills container with ranges, so {posbegin,posend}
@@ -168,7 +178,7 @@ vstringtok (Container &container, string const &in,
 
 size_t writen2(int fd, const void *buf, size_t count);
 inline size_t writen2(int fd, const std::string &s) { return writen2(fd, s.data(), s.size()); }
-size_t readn2(int fd, void* buffer, size_t len);
+size_t readn2(int fileDesc, void* buffer, size_t len);
 size_t readn2WithTimeout(int fd, void* buffer, size_t len, const struct timeval& idleTimeout, const struct timeval& totalTimeout={0,0}, bool allowIncomplete=false);
 size_t writen2WithTimeout(int fd, const void * buffer, size_t len, const struct timeval& timeout);
 
@@ -320,9 +330,9 @@ inline double getTime()
   return now.tv_sec+now.tv_usec/1000000.0;
 }
 
-inline void unixDie(const string &why)
+[[noreturn]] inline void unixDie(const string &why)
 {
-  throw runtime_error(why+": "+stringerror());
+  throw runtime_error(why + ": " + stringerror(errno));
 }
 
 string makeHexDump(const string& str);
@@ -620,7 +630,7 @@ T valueOrEmpty(const P val) {
 
 // I'm not very OCD, but I appreciate loglines like "processing 1 delta", "processing 2 deltas" :-)
 template <typename Integer,
-typename std::enable_if_t<std::is_integral<Integer>::value, bool> = true>
+typename std::enable_if_t<std::is_integral_v<Integer>, bool> = true>
 const char* addS(Integer siz, const char* singular = "", const char *plural = "s")
 {
   if (siz == 1) {
@@ -630,7 +640,7 @@ const char* addS(Integer siz, const char* singular = "", const char *plural = "s
 }
 
 template <typename C,
-typename std::enable_if_t<std::is_class<C>::value, bool> = true>
+typename std::enable_if_t<std::is_class_v<C>, bool> = true>
 const char* addS(const C& c, const char* singular = "", const char *plural = "s")
 {
   return addS(c.size(), singular, plural);
@@ -804,7 +814,7 @@ struct FDWrapper
 
   FDWrapper& operator=(FDWrapper&& rhs) noexcept
   {
-    if (d_fd != -1) {
+    if (d_fd >= 0) {
       close(d_fd);
     }
     d_fd = rhs.d_fd;
@@ -822,14 +832,39 @@ struct FDWrapper
     return d_fd;
   }
 
-  void reset()
+  int reset()
   {
-    if (d_fd != -1) {
-      ::close(d_fd);
-      d_fd = -1;
+    int ret = 0;
+    if (d_fd >= 0) {
+      ret = close(d_fd);
     }
+    d_fd = -1;
+    return ret;
   }
 
 private:
   int d_fd{-1};
 };
+
+namespace pdns
+{
+[[nodiscard]] std::optional<std::string> visit_directory(const std::string& directory, const std::function<bool(ino_t inodeNumber, const std::string_view& name)>& visitor);
+
+struct FilePtrDeleter
+{
+  /* using a deleter instead of decltype(&fclose) has two big advantages:
+     - the deleter is included in the type and does not have to be passed
+       when creating a new object (easier to use, less memory usage, in theory
+       better inlining)
+     - we avoid the annoying "ignoring attributes on template argument ‘int (*)(FILE*)’"
+       warning from the compiler, which is there because fclose is tagged as __nonnull((1))
+  */
+  void operator()(FILE* filePtr) const noexcept {
+    fclose(filePtr);
+  }
+};
+
+using UniqueFilePtr = std::unique_ptr<FILE, FilePtrDeleter>;
+
+UniqueFilePtr openFileForWriting(const std::string& filePath, mode_t permissions, bool mustNotExist = true, bool appendIfExists = false);
+}

@@ -123,6 +123,7 @@ bool RecursorPacketCache::checkResponseMatches(MapCombo::LockedContent& shard, s
     }
 
     if (now < iter->d_ttd) { // it is right, it is fresh!
+      // coverity[store_truncates_time_t]
       *age = static_cast<uint32_t>(now - iter->d_creation);
       // we know ttl is > 0
       auto ttl = static_cast<uint32_t>(iter->d_ttd - now);
@@ -254,7 +255,7 @@ void RecursorPacketCache::insertResponsePacket(unsigned int tag, uint32_t qhash,
 void RecursorPacketCache::doPruneTo(time_t now, size_t maxSize)
 {
   size_t cacheSize = size();
-  pruneMutexCollectionsVector<SequencedTag>(now, *this, d_maps, maxSize, cacheSize);
+  pruneMutexCollectionsVector<SequencedTag>(now, d_maps, maxSize, cacheSize);
 }
 
 uint64_t RecursorPacketCache::doDump(int file)
@@ -263,7 +264,7 @@ uint64_t RecursorPacketCache::doDump(int file)
   if (fdupped == -1) {
     return 0;
   }
-  auto filePtr = std::unique_ptr<FILE, decltype(&fclose)>(fdopen(fdupped, "w"), fclose);
+  auto filePtr = pdns::UniqueFilePtr(fdopen(fdupped, "w"));
   if (!filePtr) {
     close(fdupped);
     return 0;

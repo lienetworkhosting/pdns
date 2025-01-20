@@ -27,13 +27,14 @@ failed-soa-retry: 3
 webserver-address: %s
 """
 
-    _config_domains = {'example': '127.0.0.1:' + str(xfrServerPort)}
+    _config_domains = [{'domain' : 'example', 'master' : '127.0.0.1:' + str(xfrServerPort)}]
 
     metric_prog_stats = ["ixfrdist_uptime_seconds", "ixfrdist_domains",
                          "ixfrdist_unknown_domain_inqueries_total",
                          "ixfrdist_sys_msec", "ixfrdist_user_msec",
                          "ixfrdist_real_memory_usage",
-                         "ixfrdist_fd_usage"]
+                         "ixfrdist_fd_usage",
+                         "ixfrdist_notimp"]
     metric_domain_stats = ["ixfrdist_soa_serial", "ixfrdist_soa_checks_total",
                            "ixfrdist_soa_checks_failed_total",
                            "ixfrdist_soa_inqueries_total",

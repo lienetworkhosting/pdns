@@ -59,32 +59,29 @@ thread_local TCPOutConnectionManager t_tcp_manager;
 std::shared_ptr<Logr::Logger> g_slogout;
 bool g_paddingOutgoing;
 
-void remoteLoggerQueueData(RemoteLoggerInterface& r, const std::string& data)
+void remoteLoggerQueueData(RemoteLoggerInterface& rli, const std::string& data)
 {
-  auto ret = r.queueData(data);
+  auto ret = rli.queueData(data);
 
   switch (ret) {
   case RemoteLoggerInterface::Result::Queued:
     break;
   case RemoteLoggerInterface::Result::PipeFull: {
-    const auto msg = RemoteLoggerInterface::toErrorString(ret);
-    const auto name = r.name();
-    SLOG(g_log << Logger::Debug << name << ": " << msg << std::endl,
-         g_slog->withName(name)->info(Logr::Debug, msg));
+    const auto& msg = RemoteLoggerInterface::toErrorString(ret);
+    SLOG(g_log << Logger::Debug << rli.name() << ": " << msg << std::endl,
+         g_slog->withName(rli.name())->info(Logr::Debug, msg));
     break;
   }
   case RemoteLoggerInterface::Result::TooLarge: {
-    const auto msg = RemoteLoggerInterface::toErrorString(ret);
-    const auto name = r.name();
-    SLOG(g_log << Logger::Notice << name << ": " << msg << endl,
-         g_slog->withName(name)->info(Logr::Debug, msg));
+    const auto& msg = RemoteLoggerInterface::toErrorString(ret);
+    SLOG(g_log << Logger::Notice << rli.name() << ": " << msg << endl,
+         g_slog->withName(rli.name())->info(Logr::Debug, msg));
     break;
   }
   case RemoteLoggerInterface::Result::OtherError: {
-    const auto msg = RemoteLoggerInterface::toErrorString(ret);
-    const auto name = r.name();
-    SLOG(g_log << Logger::Warning << name << ": " << msg << std::endl,
-         g_slog->withName(name)->info(Logr::Warning, msg));
+    const auto& msg = RemoteLoggerInterface::toErrorString(ret);
+    SLOG(g_log << Logger::Warning << rli.name() << ": " << msg << std::endl,
+         g_slog->withName(rli.name())->info(Logr::Warning, msg));
     break;
   }
   }
@@ -93,8 +90,6 @@ void remoteLoggerQueueData(RemoteLoggerInterface& r, const std::string& data)
 #ifdef HAVE_FSTRM
 #include "dnstap.hh"
 #include "fstrm_logger.hh"
-
-bool g_syslog;
 
 static bool isEnabledForQueries(const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstreamLoggers)
 {
@@ -109,7 +104,7 @@ static bool isEnabledForQueries(const std::shared_ptr<std::vector<std::unique_pt
   return false;
 }
 
-static void logFstreamQuery(const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstreamLoggers, const struct timeval& queryTime, const ComboAddress& localip, const ComboAddress& ip, DnstapMessage::ProtocolType protocol, boost::optional<const DNSName&> auth, const vector<uint8_t>& packet)
+static void logFstreamQuery(const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstreamLoggers, const struct timeval& queryTime, const ComboAddress& localip, const ComboAddress& address, DnstapMessage::ProtocolType protocol, const boost::optional<const DNSName&>& auth, const vector<uint8_t>& packet)
 {
   if (fstreamLoggers == nullptr)
     return;
@@ -117,7 +112,9 @@ static void logFstreamQuery(const std::shared_ptr<std::vector<std::unique_ptr<Fr
   struct timespec ts;
   TIMEVAL_TO_TIMESPEC(&queryTime, &ts);
   std::string str;
-  DnstapMessage message(str, DnstapMessage::MessageType::resolver_query, SyncRes::s_serverID, &localip, &ip, protocol, reinterpret_cast<const char*>(&*packet.begin()), packet.size(), &ts, nullptr, auth);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  DnstapMessage message(std::move(str), DnstapMessage::MessageType::resolver_query, SyncRes::s_serverID, &localip, &address, protocol, reinterpret_cast<const char*>(packet.data()), packet.size(), &ts, nullptr, auth);
+  str = message.getBuffer();
 
   for (auto& logger : *fstreamLoggers) {
     remoteLoggerQueueData(*logger, str);
@@ -137,7 +134,7 @@ static bool isEnabledForResponses(const std::shared_ptr<std::vector<std::unique_
   return false;
 }
 
-static void logFstreamResponse(const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstreamLoggers, const ComboAddress& localip, const ComboAddress& ip, DnstapMessage::ProtocolType protocol, boost::optional<const DNSName&> auth, const PacketBuffer& packet, const struct timeval& queryTime, const struct timeval& replyTime)
+static void logFstreamResponse(const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstreamLoggers, const ComboAddress& localip, const ComboAddress& address, DnstapMessage::ProtocolType protocol, const boost::optional<const DNSName&>& auth, const PacketBuffer& packet, const struct timeval& queryTime, const struct timeval& replyTime)
 {
   if (fstreamLoggers == nullptr)
     return;
@@ -146,7 +143,9 @@ static void logFstreamResponse(const std::shared_ptr<std::vector<std::unique_ptr
   TIMEVAL_TO_TIMESPEC(&queryTime, &ts1);
   TIMEVAL_TO_TIMESPEC(&replyTime, &ts2);
   std::string str;
-  DnstapMessage message(str, DnstapMessage::MessageType::resolver_response, SyncRes::s_serverID, &localip, &ip, protocol, reinterpret_cast<const char*>(packet.data()), packet.size(), &ts1, &ts2, auth);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  DnstapMessage message(std::move(str), DnstapMessage::MessageType::resolver_response, SyncRes::s_serverID, &localip, &address, protocol, reinterpret_cast<const char*>(packet.data()), packet.size(), &ts1, &ts2, auth);
+  str = message.getBuffer();
 
   for (auto& logger : *fstreamLoggers) {
     remoteLoggerQueueData(*logger, str);
@@ -155,7 +154,7 @@ static void logFstreamResponse(const std::shared_ptr<std::vector<std::unique_ptr
 
 #endif // HAVE_FSTRM
 
-static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, boost::optional<const boost::uuids::uuid&> initialRequestId, const boost::uuids::uuid& uuid, const ComboAddress& ip, const DNSName& domain, int type, uint16_t qid, bool doTCP, bool tls, size_t bytes, boost::optional<Netmask>& srcmask)
+static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, const boost::optional<const boost::uuids::uuid&>& initialRequestId, const boost::uuids::uuid& uuid, const ComboAddress& address, const DNSName& domain, int type, uint16_t qid, bool doTCP, bool tls, size_t bytes, const boost::optional<Netmask>& srcmask, const std::string& nsName)
 {
   if (!outgoingLoggers) {
     return;
@@ -178,7 +177,7 @@ static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<R
   pdns::ProtoZero::Message m{buffer};
   m.setType(pdns::ProtoZero::Message::MessageType::DNSOutgoingQueryType);
   m.setMessageIdentity(uuid);
-  m.setSocketFamily(ip.sin4.sin_family);
+  m.setSocketFamily(address.sin4.sin_family);
   if (!doTCP) {
     m.setSocketProtocol(pdns::ProtoZero::Message::TransportProtocol::UDP);
   }
@@ -189,12 +188,12 @@ static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<R
     m.setSocketProtocol(pdns::ProtoZero::Message::TransportProtocol::DoT);
   }
 
-  m.setTo(ip);
+  m.setTo(address);
   m.setInBytes(bytes);
   m.setTime();
   m.setId(qid);
   m.setQuestion(domain, type, QClass::IN);
-  m.setToPort(ip.getPort());
+  m.setToPort(address.getPort());
   m.setServerIdentity(SyncRes::s_serverID);
 
   if (initialRequestId) {
@@ -205,6 +204,9 @@ static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<R
     m.setEDNSSubnet(*srcmask, 128);
   }
 
+  if (!nsName.empty()) {
+    m.setMeta("nsName", {nsName}, {});
+  }
   for (auto& logger : *outgoingLoggers) {
     if (logger->logQueries()) {
       remoteLoggerQueueData(*logger, buffer);
@@ -212,7 +214,7 @@ static void logOutgoingQuery(const std::shared_ptr<std::vector<std::unique_ptr<R
   }
 }
 
-static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, boost::optional<const boost::uuids::uuid&> initialRequestId, const boost::uuids::uuid& uuid, const ComboAddress& ip, const DNSName& domain, int type, uint16_t qid, bool doTCP, bool tls, boost::optional<Netmask>& srcmask, size_t bytes, int rcode, const std::vector<DNSRecord>& records, const struct timeval& queryTime, const std::set<uint16_t>& exportTypes)
+static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, const boost::optional<const boost::uuids::uuid&>& initialRequestId, const boost::uuids::uuid& uuid, const ComboAddress& address, const DNSName& domain, int type, uint16_t qid, bool doTCP, bool tls, const boost::optional<Netmask>& srcmask, size_t bytes, int rcode, const std::vector<DNSRecord>& records, const struct timeval& queryTime, const std::set<uint16_t>& exportTypes, const std::string& nsName)
 {
   if (!outgoingLoggers) {
     return;
@@ -235,7 +237,7 @@ static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_pt
   pdns::ProtoZero::RecMessage m{buffer};
   m.setType(pdns::ProtoZero::Message::MessageType::DNSIncomingResponseType);
   m.setMessageIdentity(uuid);
-  m.setSocketFamily(ip.sin4.sin_family);
+  m.setSocketFamily(address.sin4.sin_family);
   if (!doTCP) {
     m.setSocketProtocol(pdns::ProtoZero::Message::TransportProtocol::UDP);
   }
@@ -245,12 +247,12 @@ static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_pt
   else {
     m.setSocketProtocol(pdns::ProtoZero::Message::TransportProtocol::DoT);
   }
-  m.setTo(ip);
+  m.setTo(address);
   m.setInBytes(bytes);
   m.setTime();
   m.setId(qid);
   m.setQuestion(domain, type, QClass::IN);
-  m.setToPort(ip.getPort());
+  m.setToPort(address.getPort());
   m.setServerIdentity(SyncRes::s_serverID);
 
   if (initialRequestId) {
@@ -259,6 +261,9 @@ static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_pt
 
   if (srcmask) {
     m.setEDNSSubnet(*srcmask, 128);
+  }
+  if (!nsName.empty()) {
+    m.setMeta("nsName", {nsName}, {});
   }
 
   m.startResponse();
@@ -271,7 +276,7 @@ static void logIncomingResponse(const std::shared_ptr<std::vector<std::unique_pt
   }
 
   for (const auto& record : records) {
-    m.addRR(record, exportTypes, false);
+    m.addRR(record, exportTypes, std::nullopt);
   }
   m.commitResponse();
 
@@ -386,7 +391,7 @@ static void addPadding(const DNSPacketWriter& pw, size_t bufsize, DNSPacketWrite
     Never throws!
  */
 // NOLINTNEXTLINE(readability-function-cognitive-complexity): https://github.com/PowerDNS/pdns/issues/12791
-static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName& domain, int type, bool doTCP, bool sendRDQuery, int EDNS0Level, struct timeval* now, boost::optional<Netmask>& srcmask, const boost::optional<const ResolveContext&>& context, const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, [[maybe_unused]] const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstrmLoggers, const std::set<uint16_t>& exportTypes, LWResult* lwr, bool* chained, TCPOutConnectionManager::Connection& connection)
+static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName& domain, int type, bool doTCP, bool sendRDQuery, int EDNS0Level, struct timeval* now, boost::optional<Netmask>& srcmask, const ResolveContext& context, const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, [[maybe_unused]] const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstrmLoggers, const std::set<uint16_t>& exportTypes, LWResult* lwr, bool* chained, TCPOutConnectionManager::Connection& connection)
 {
   size_t len;
   size_t bufsize = g_outgoingEDNSBufsize;
@@ -397,6 +402,10 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
   uint16_t qid = dns_random_uint16();
   DNSPacketWriter pw(vpacket, domain, type);
   bool dnsOverTLS = SyncRes::s_dot_to_port_853 && address.getPort() == 853;
+  std::string nsName;
+  if (!context.d_nsName.empty()) {
+    nsName = context.d_nsName.toStringNoDot();
+  }
 
   pw.getHeader()->rd = sendRDQuery;
   pw.getHeader()->id = qid;
@@ -419,11 +428,11 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
   if (EDNS0Level > 0) {
     DNSPacketWriter::optvect_t opts;
     if (srcmask) {
-      EDNSSubnetOpts eo;
-      eo.source = *srcmask;
+      EDNSSubnetOpts subnetOpts;
+      subnetOpts.setSource(*srcmask);
       outgoingECSBits = srcmask->getBits();
       outgoingECSAddr = srcmask->getNetwork();
-      opts.emplace_back(EDNSOptionCode::ECS, makeEDNSSubnetOptsString(eo));
+      opts.emplace_back(EDNSOptionCode::ECS, subnetOpts.makeOptString());
       weWantEDNSSubnet = true;
     }
 
@@ -447,7 +456,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
 
   if (outgoingLoggers) {
     uuid = getUniqueID();
-    logOutgoingQuery(outgoingLoggers, context ? context->d_initialRequestId : boost::none, uuid, address, domain, type, qid, doTCP, dnsOverTLS, vpacket.size(), srcmask);
+    logOutgoingQuery(outgoingLoggers, context.d_initialRequestId, uuid, address, domain, type, qid, doTCP, dnsOverTLS, vpacket.size(), srcmask, nsName);
   }
 
   srcmask = boost::none; // this is also our return value, even if EDNS0Level == 0
@@ -468,17 +477,14 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
 
   if (!doTCP) {
     int queryfd;
-    if (address.sin4.sin_family == AF_INET6) {
-      t_Counters.at(rec::Counter::ipv6queries)++;
-    }
 
-    ret = asendto(vpacket.data(), vpacket.size(), 0, address, qid, domain, type, weWantEDNSSubnet, &queryfd);
+    ret = asendto(vpacket.data(), vpacket.size(), 0, address, qid, domain, type, weWantEDNSSubnet, &queryfd, *now);
 
     if (ret != LWResult::Result::Success) {
       return ret;
     }
 
-    if (queryfd == -1) {
+    if (queryfd <= -1) {
       *chained = true;
     }
 
@@ -490,7 +496,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
         (void)getsockname(queryfd, reinterpret_cast<sockaddr*>(&localip), &slen); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast))
       }
       if (fstrmQEnabled) {
-        logFstreamQuery(fstrmLoggers, queryTime, localip, address, DnstapMessage::ProtocolType::DoUDP, context ? context->d_auth : boost::none, vpacket);
+        logFstreamQuery(fstrmLoggers, queryTime, localip, address, DnstapMessage::ProtocolType::DoUDP, context.d_auth ? context.d_auth : boost::none, vpacket);
       }
     }
 #endif /* HAVE_FSTRM */
@@ -507,15 +513,11 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
         // peer has closed it on error, so we retry. At some point we
         // *will* get a new connection, so this loop is not endless.
         isNew = true; // tcpconnect() might throw for new connections. In that case, we want to break the loop, scanbuild complains here, which is a false positive afaik
-        std::string nsName;
-        if (context && !context->d_nsName.empty()) {
-          nsName = context->d_nsName.toStringNoDot();
-        }
         isNew = tcpconnect(address, connection, dnsOverTLS, nsName);
         ret = tcpsendrecv(address, connection, localip, vpacket, len, buf);
 #ifdef HAVE_FSTRM
         if (fstrmQEnabled) {
-          logFstreamQuery(fstrmLoggers, queryTime, localip, address, !dnsOverTLS ? DnstapMessage::ProtocolType::DoTCP : DnstapMessage::ProtocolType::DoT, context ? context->d_auth : boost::none, vpacket);
+          logFstreamQuery(fstrmLoggers, queryTime, localip, address, !dnsOverTLS ? DnstapMessage::ProtocolType::DoTCP : DnstapMessage::ProtocolType::DoT, context.d_auth, vpacket);
         }
 #endif /* HAVE_FSTRM */
         if (ret == LWResult::Result::Success) {
@@ -537,9 +539,19 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
 
   if (ret != LWResult::Result::Success) { // includes 'timeout'
     if (outgoingLoggers) {
-      logIncomingResponse(outgoingLoggers, context ? context->d_initialRequestId : boost::none, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, 0, -1, {}, queryTime, exportTypes);
+      logIncomingResponse(outgoingLoggers, context.d_initialRequestId, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, 0, -1, {}, queryTime, exportTypes, nsName);
     }
     return ret;
+  }
+
+  if (*chained) {
+    auto msec = lwr->d_usec / 1000;
+    if (msec > g_networkTimeoutMsec * 2 / 3) {
+      auto jitterMsec = dns_random(msec);
+      if (jitterMsec > 0) {
+        mthreadSleep(jitterMsec);
+      }
+    }
   }
 
   buf.resize(len);
@@ -550,7 +562,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
     if (dnsOverTLS) {
       protocol = DnstapMessage::ProtocolType::DoT;
     }
-    logFstreamResponse(fstrmLoggers, localip, address, protocol, context ? context->d_auth : boost::none, buf, queryTime, *now);
+    logFstreamResponse(fstrmLoggers, localip, address, protocol, context.d_auth, buf, queryTime, *now);
   }
 #endif /* HAVE_FSTRM */
 
@@ -564,7 +576,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
 
     if (mdp.d_header.rcode == RCode::FormErr && mdp.d_qname.empty() && mdp.d_qtype == 0 && mdp.d_qclass == 0) {
       if (outgoingLoggers) {
-        logIncomingResponse(outgoingLoggers, context ? context->d_initialRequestId : boost::none, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes);
+        logIncomingResponse(outgoingLoggers, context.d_initialRequestId, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes, nsName);
       }
       lwr->d_validpacket = true;
       return LWResult::Result::Success; // this is "success", the error is set in lwr->d_rcode
@@ -583,8 +595,9 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
     }
 
     lwr->d_records.reserve(mdp.d_answers.size());
-    for (const auto& a : mdp.d_answers)
-      lwr->d_records.push_back(a.first);
+    for (const auto& answer : mdp.d_answers) {
+      lwr->d_records.push_back(answer);
+    }
 
     EDNSOpts edo;
     if (EDNS0Level > 0 && getEDNSOpts(mdp, &edo)) {
@@ -594,13 +607,13 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
         for (const auto& opt : edo.d_options) {
           if (opt.first == EDNSOptionCode::ECS) {
             EDNSSubnetOpts reso;
-            if (getEDNSSubnetOptsFromString(opt.second, &reso)) {
+            if (EDNSSubnetOpts::getFromString(opt.second, &reso)) {
               /* rfc7871 states that 0 "indicate[s] that the answer is suitable for all addresses in FAMILY",
                  so we might want to still pass the information along to be able to differentiate between
                  IPv4 and IPv6. Still I'm pretty sure it doesn't matter in real life, so let's not duplicate
                  entries in our cache. */
-              if (reso.scope.getBits()) {
-                uint8_t bits = std::min(reso.scope.getBits(), outgoingECSBits);
+              if (reso.getScopePrefixLength() != 0) {
+                uint8_t bits = std::min(reso.getScopePrefixLength(), outgoingECSBits);
                 outgoingECSAddr.truncate(bits);
                 srcmask = Netmask(outgoingECSAddr, bits);
               }
@@ -611,7 +624,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
     }
 
     if (outgoingLoggers) {
-      logIncomingResponse(outgoingLoggers, context ? context->d_initialRequestId : boost::none, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes);
+      logIncomingResponse(outgoingLoggers, context.d_initialRequestId, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes, nsName);
     }
 
     lwr->d_validpacket = true;
@@ -629,7 +642,7 @@ static LWResult::Result asyncresolve(const ComboAddress& address, const DNSName&
     t_Counters.at(rec::Counter::serverParseError)++;
 
     if (outgoingLoggers) {
-      logIncomingResponse(outgoingLoggers, context ? context->d_initialRequestId : boost::none, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes);
+      logIncomingResponse(outgoingLoggers, context.d_initialRequestId, uuid, address, domain, type, qid, doTCP, dnsOverTLS, srcmask, len, lwr->d_rcode, lwr->d_records, queryTime, exportTypes, nsName);
     }
 
     return LWResult::Result::Success; // success - oddly enough
@@ -649,14 +662,14 @@ out:
   return LWResult::Result::PermanentError;
 }
 
-LWResult::Result asyncresolve(const ComboAddress& ip, const DNSName& domain, int type, bool doTCP, bool sendRDQuery, int EDNS0Level, struct timeval* now, boost::optional<Netmask>& srcmask, boost::optional<const ResolveContext&> context, const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstrmLoggers, const std::set<uint16_t>& exportTypes, LWResult* lwr, bool* chained)
+LWResult::Result asyncresolve(const ComboAddress& address, const DNSName& domain, int type, bool doTCP, bool sendRDQuery, int EDNS0Level, struct timeval* now, boost::optional<Netmask>& srcmask, const ResolveContext& context, const std::shared_ptr<std::vector<std::unique_ptr<RemoteLogger>>>& outgoingLoggers, const std::shared_ptr<std::vector<std::unique_ptr<FrameStreamLogger>>>& fstrmLoggers, const std::set<uint16_t>& exportTypes, LWResult* lwr, bool* chained)
 {
   TCPOutConnectionManager::Connection connection;
-  auto ret = asyncresolve(ip, domain, type, doTCP, sendRDQuery, EDNS0Level, now, srcmask, context, outgoingLoggers, fstrmLoggers, exportTypes, lwr, chained, connection);
+  auto ret = asyncresolve(address, domain, type, doTCP, sendRDQuery, EDNS0Level, now, srcmask, context, outgoingLoggers, fstrmLoggers, exportTypes, lwr, chained, connection);
 
   if (doTCP) {
     if (connection.d_handler && lwr->d_validpacket) {
-      t_tcp_manager.store(*now, ip, std::move(connection));
+      t_tcp_manager.store(*now, address, std::move(connection));
     }
   }
   return ret;

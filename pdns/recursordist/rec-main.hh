@@ -38,14 +38,13 @@
 #include "rec_channel.hh"
 #include "threadname.hh"
 #include "recpacketcache.hh"
+#include "ratelimitedlog.hh"
 
 #ifdef NOD_ENABLED
 #include "nod.hh"
 #endif /* NOD_ENABLED */
 
-#ifdef HAVE_BOOST_CONTAINER_FLAT_SET_HPP
 #include <boost/container/flat_set.hpp>
-#endif
 
 extern std::shared_ptr<Logr::Logger> g_slogtcpin;
 extern std::shared_ptr<Logr::Logger> g_slogudpin;
@@ -125,7 +124,7 @@ struct DNSComboWriter
   };
   std::string d_query;
   std::unordered_set<std::string> d_policyTags;
-  const std::unordered_set<std::string> d_gettagPolicyTags;
+  std::unordered_set<std::string> d_gettagPolicyTags;
   std::string d_routingTag;
   std::vector<DNSRecord> d_records;
 
@@ -193,6 +192,7 @@ extern std::unique_ptr<RecursorPacketCache> g_packetCache;
 using RemoteLoggerStats_t = std::unordered_map<std::string, RemoteLoggerInterface::Stats>;
 
 extern bool g_yamlSettings;
+extern string g_yamlSettingsSuffix;
 extern bool g_logCommonErrors;
 extern size_t g_proxyProtocolMaximumSize;
 extern std::atomic<bool> g_quiet;
@@ -205,12 +205,15 @@ extern unsigned int g_maxMThreads;
 extern bool g_reusePort;
 extern bool g_anyToTcp;
 extern size_t g_tcpMaxQueriesPerConn;
+extern unsigned int g_maxTCPClients;
 extern unsigned int g_maxTCPPerClient;
 extern int g_tcpTimeout;
 extern uint16_t g_udpTruncationThreshold;
 extern double g_balancingFactor;
 extern size_t g_maxUDPQueriesPerRound;
 extern bool g_useKernelTimestamp;
+extern bool g_allowNoRD;
+extern unsigned int g_maxChainLength;
 extern thread_local std::shared_ptr<NetmaskGroup> t_allowFrom;
 extern thread_local std::shared_ptr<NetmaskGroup> t_allowNotifyFrom;
 extern thread_local std::shared_ptr<notifyset_t> t_allowNotifyFor;
@@ -220,6 +223,7 @@ extern boost::optional<ComboAddress> g_dns64Prefix;
 extern DNSName g_dns64PrefixReverse;
 extern uint64_t g_latencyStatSize;
 extern NetmaskGroup g_proxyProtocolACL;
+extern std::set<ComboAddress> g_proxyProtocolExceptions;
 extern std::atomic<bool> g_statsWanted;
 extern uint32_t g_disthashseed;
 extern int g_argc;
@@ -236,18 +240,20 @@ extern RecursorControlChannel g_rcc; // only active in the handler thread
 
 extern thread_local std::unique_ptr<ProxyMapping> t_proxyMapping;
 using ProxyMappingStats_t = std::unordered_map<Netmask, ProxyMappingCounts>;
+extern pdns::RateLimitedLog g_rateLimitedLogger;
 
 #ifdef NOD_ENABLED
 extern bool g_nodEnabled;
 extern DNSName g_nodLookupDomain;
 extern bool g_nodLog;
 extern SuffixMatchNode g_nodDomainWL;
+extern SuffixMatchNode g_udrDomainWL;
 extern std::string g_nod_pbtag;
 extern bool g_udrEnabled;
 extern bool g_udrLog;
 extern std::string g_udr_pbtag;
-extern thread_local std::shared_ptr<nod::NODDB> t_nodDBp;
-extern thread_local std::shared_ptr<nod::UniqueResponseDB> t_udrDBp;
+extern std::unique_ptr<nod::NODDB> g_nodDBp;
+extern std::unique_ptr<nod::UniqueResponseDB> g_udrDBp;
 #endif
 
 struct ProtobufServersInfo
@@ -271,11 +277,7 @@ extern thread_local FrameStreamServersInfo t_frameStreamServersInfo;
 extern thread_local FrameStreamServersInfo t_nodFrameStreamServersInfo;
 #endif /* HAVE_FSTRM */
 
-#ifdef HAVE_BOOST_CONTAINER_FLAT_SET_HPP
 extern boost::container::flat_set<uint16_t> g_avoidUdpSourcePorts;
-#else
-extern std::set<uint16_t> g_avoidUdpSourcePorts;
-#endif
 
 /* without reuseport, all listeners share the same sockets */
 typedef vector<pair<int, std::function<void(int, boost::any&)>>> deferredAdd_t;
@@ -590,8 +592,8 @@ bool checkOutgoingProtobufExport(LocalStateHolder<LuaConfigItems>& luaconfsLocal
 bool checkFrameStreamExport(LocalStateHolder<LuaConfigItems>& luaconfsLocal, const FrameStreamExportConfig& config, FrameStreamServersInfo& serverInfos);
 #endif
 void getQNameAndSubnet(const std::string& question, DNSName* dnsname, uint16_t* qtype, uint16_t* qclass,
-                       bool& foundECS, EDNSSubnetOpts* ednssubnet, EDNSOptionViewMap* options);
-void protobufLogQuery(LocalStateHolder<LuaConfigItems>& luaconfsLocal, const boost::uuids::uuid& uniqueId, const ComboAddress& remote, const ComboAddress& local, const ComboAddress& mappedSource, const Netmask& ednssubnet, bool tcp, uint16_t queryID, size_t len, const DNSName& qname, uint16_t qtype, uint16_t qclass, const std::unordered_set<std::string>& policyTags, const std::string& requestorId, const std::string& deviceId, const std::string& deviceName, const std::map<std::string, RecursorLua4::MetaValue>& meta);
+                       bool& foundECS, EDNSSubnetOpts* ednssubnet, EDNSOptionViewMap* options, boost::optional<uint32_t>& ednsVersion);
+void protobufLogQuery(LocalStateHolder<LuaConfigItems>& luaconfsLocal, const boost::uuids::uuid& uniqueId, const ComboAddress& remote, const ComboAddress& local, const ComboAddress& mappedSource, const Netmask& ednssubnet, bool tcp, size_t len, const DNSName& qname, uint16_t qtype, uint16_t qclass, const std::unordered_set<std::string>& policyTags, const std::string& requestorId, const std::string& deviceId, const std::string& deviceName, const std::map<std::string, RecursorLua4::MetaValue>& meta, const boost::optional<uint32_t>& ednsVersion, const dnsheader& header);
 bool isAllowNotifyForZone(DNSName qname);
 bool checkForCacheHit(bool qnameParsed, unsigned int tag, const string& data,
                       DNSName& qname, uint16_t& qtype, uint16_t& qclass,
@@ -609,15 +611,19 @@ void protobufLogResponse(const struct dnsheader* header, LocalStateHolder<LuaCon
                          const std::unordered_set<std::string>& policyTags);
 void requestWipeCaches(const DNSName& canon);
 void startDoResolve(void*);
-bool expectProxyProtocol(const ComboAddress& from);
+bool expectProxyProtocol(const ComboAddress& from, const ComboAddress& listenAddress);
 void finishTCPReply(std::unique_ptr<DNSComboWriter>&, bool hadError, bool updateInFlight);
 void checkFastOpenSysctl(bool active, Logr::log_t);
 void checkTFOconnect(Logr::log_t);
-void makeTCPServerSockets(deferredAdd_t& deferredAdds, std::set<int>& tcpSockets, Logr::log_t);
+unsigned int makeTCPServerSockets(deferredAdd_t& deferredAdds, std::set<int>& tcpSockets, Logr::log_t, bool doLog, unsigned int instances);
 void handleNewTCPQuestion(int fileDesc, FDMultiplexer::funcparam_t&);
 
-void makeUDPServerSockets(deferredAdd_t& deferredAdds, Logr::log_t);
+unsigned int makeUDPServerSockets(deferredAdd_t& deferredAdds, Logr::log_t, bool doLog, unsigned int instances);
 string doTraceRegex(FDWrapper file, vector<string>::const_iterator begin, vector<string>::const_iterator end);
+extern bool g_luaSettingsInYAML;
+void startLuaConfigDelayedThreads(const LuaConfigItems& luaConfig, uint64_t generation);
+void activateLuaConfig(LuaConfigItems& lci);
+unsigned int authWaitTimeMSec(const std::unique_ptr<MT_t>& mtasker);
 
 #define LOCAL_NETS "127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 192.168.0.0/16, 172.16.0.0/12, ::1/128, fc00::/7, fe80::/10"
 #define LOCAL_NETS_INVERSE "!127.0.0.0/8, !10.0.0.0/8, !100.64.0.0/10, !169.254.0.0/16, !192.168.0.0/16, !172.16.0.0/12, !::1/128, !fc00::/7, !fe80::/10"

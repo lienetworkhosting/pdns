@@ -95,24 +95,26 @@ size_t writen2(int fileDesc, const void *buf, size_t count)
   return count;
 }
 
-size_t readn2(int fd, void* buffer, size_t len)
+size_t readn2(int fileDesc, void* buffer, size_t len)
 {
-  size_t pos=0;
-  ssize_t res;
-  for(;;) {
-    res = read(fd, (char*)buffer + pos, len - pos);
-    if(res == 0)
+  size_t pos = 0;
+
+  for (;;) {
+    auto res = read(fileDesc, static_cast<char *>(buffer) + pos, len - pos); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): it's the API
+    if (res == 0) {
       throw runtime_error("EOF while reading message");
-    if(res < 0) {
-      if (errno == EAGAIN)
+    }
+    if (res < 0) {
+      if (errno == EAGAIN) {
         throw std::runtime_error("used readn2 on non-blocking socket, got EAGAIN");
-      else
-        unixDie("failed in readn2");
+      }
+      unixDie("failed in readn2");
     }
 
-    pos+=(size_t)res;
-    if(pos == len)
+    pos += static_cast<size_t>(res);
+    if (pos == len) {
       break;
+    }
   }
   return len;
 }
@@ -282,7 +284,7 @@ auto pdns::OpenSSL::error(const std::string& errorMessage) -> std::runtime_error
     }
   }
 #endif
-  return std::runtime_error(fullErrorMessage);
+  return std::runtime_error{fullErrorMessage};
 }
 
 auto pdns::OpenSSL::error(const std::string& componentName, const std::string& errorMessage) -> std::runtime_error
@@ -582,16 +584,24 @@ string bitFlip(const string &str)
 
 void cleanSlashes(string &str)
 {
-  string::const_iterator i;
   string out;
-  for(i=str.begin();i!=str.end();++i) {
-    if(*i=='/' && i!=str.begin() && *(i-1)=='/')
-      continue;
-    out.append(1,*i);
+  bool keepNextSlash = true;
+  for (const auto& value : str) {
+    if (value == '/') {
+      if (keepNextSlash) {
+        keepNextSlash = false;
+      }
+      else {
+        continue;
+      }
+    }
+    else {
+      keepNextSlash = true;
+    }
+    out.append(1, value);
   }
-  str=out;
+  str = std::move(out);
 }
-
 
 bool IpToU32(const string &str, uint32_t *ip)
 {
@@ -717,6 +727,62 @@ int logFacilityToLOG(unsigned int facility)
   default:
     return -1;
   }
+}
+
+std::optional<int> logFacilityFromString(std::string facilityStr)
+{
+  static std::unordered_map<std::string, int> const s_facilities = {
+    {"local0", LOG_LOCAL0},
+    {"log_local0", LOG_LOCAL0},
+    {"local1", LOG_LOCAL1},
+    {"log_local1", LOG_LOCAL1},
+    {"local2", LOG_LOCAL2},
+    {"log_local2", LOG_LOCAL2},
+    {"local3", LOG_LOCAL3},
+    {"log_local3", LOG_LOCAL3},
+    {"local4", LOG_LOCAL4},
+    {"log_local4", LOG_LOCAL4},
+    {"local5", LOG_LOCAL5},
+    {"log_local5", LOG_LOCAL5},
+    {"local6", LOG_LOCAL6},
+    {"log_local6", LOG_LOCAL6},
+    {"local7", LOG_LOCAL7},
+    {"log_local7", LOG_LOCAL7},
+    /* most of these likely make very little sense
+       for us, but why not? */
+    {"kern", LOG_KERN},
+    {"log_kern", LOG_KERN},
+    {"user", LOG_USER},
+    {"log_user", LOG_USER},
+    {"mail", LOG_MAIL},
+    {"log_mail", LOG_MAIL},
+    {"daemon", LOG_DAEMON},
+    {"log_daemon", LOG_DAEMON},
+    {"auth", LOG_AUTH},
+    {"log_auth", LOG_AUTH},
+    {"syslog", LOG_SYSLOG},
+    {"log_syslog", LOG_SYSLOG},
+    {"lpr", LOG_LPR},
+    {"log_lpr", LOG_LPR},
+    {"news", LOG_NEWS},
+    {"log_news", LOG_NEWS},
+    {"uucp", LOG_UUCP},
+    {"log_uucp", LOG_UUCP},
+    {"cron", LOG_CRON},
+    {"log_cron", LOG_CRON},
+    {"authpriv", LOG_AUTHPRIV},
+    {"log_authpriv", LOG_AUTHPRIV},
+    {"ftp", LOG_FTP},
+    {"log_ftp", LOG_FTP}
+  };
+
+  toLowerInPlace(facilityStr);
+  auto facilityIt = s_facilities.find(facilityStr);
+  if (facilityIt == s_facilities.end()) {
+    return std::nullopt;
+  }
+
+  return facilityIt->second;
 }
 
 string stripDot(const string& dom)
@@ -853,11 +919,11 @@ bool stringfgets(FILE* fp, std::string& line)
 bool readFileIfThere(const char* fname, std::string* line)
 {
   line->clear();
-  auto fp = std::unique_ptr<FILE, int(*)(FILE*)>(fopen(fname, "r"), fclose);
-  if (!fp) {
+  auto filePtr = pdns::UniqueFilePtr(fopen(fname, "r"));
+  if (!filePtr) {
     return false;
   }
-  return stringfgets(fp.get(), *line);
+  return stringfgets(filePtr.get(), *line);
 }
 
 Regex::Regex(const string &expr)
@@ -1377,30 +1443,29 @@ DNSName getTSIGAlgoName(TSIGHashEnum& algoEnum)
 uint64_t getOpenFileDescriptors(const std::string&)
 {
 #ifdef __linux__
-  DIR* dirhdl=opendir(("/proc/"+std::to_string(getpid())+"/fd/").c_str());
-  if(!dirhdl)
-    return 0;
-
-  struct dirent *entry;
-  int ret=0;
-  while((entry = readdir(dirhdl))) {
+  uint64_t nbFileDescriptors = 0;
+  const auto dirName = "/proc/" + std::to_string(getpid()) + "/fd/";
+  auto directoryError = pdns::visit_directory(dirName, [&nbFileDescriptors]([[maybe_unused]] ino_t inodeNumber, const std::string_view& name) {
     uint32_t num;
     try {
-      pdns::checked_stoi_into(num, entry->d_name);
+      pdns::checked_stoi_into(num, std::string(name));
+      if (std::to_string(num) == name) {
+        nbFileDescriptors++;
+      }
     } catch (...) {
-      continue; // was not a number.
+      // was not a number.
     }
-    if(std::to_string(num) == entry->d_name)
-      ret++;
+    return true;
+  });
+  if (directoryError) {
+    return 0U;
   }
-  closedir(dirhdl);
-  return ret;
-
+  return nbFileDescriptors;
 #elif defined(__OpenBSD__)
   // FreeBSD also has this in libopenbsd, but I don't know if that's available always
   return getdtablecount();
 #else
-  return 0;
+  return 0U;
 #endif
 }
 
@@ -1740,4 +1805,58 @@ bool constantTimeStringEquals(const std::string& a, const std::string& b)
   return res == 0;
 #endif /* !HAVE_SODIUM_MEMCMP */
 #endif /* !HAVE_CRYPTO_MEMCMP */
+}
+
+namespace pdns
+{
+struct CloseDirDeleter
+{
+  void operator()(DIR* dir) const noexcept {
+    closedir(dir);
+  }
+};
+
+std::optional<std::string> visit_directory(const std::string& directory, const std::function<bool(ino_t inodeNumber, const std::string_view& name)>& visitor)
+{
+  auto dirHandle = std::unique_ptr<DIR, CloseDirDeleter>(opendir(directory.c_str()));
+  if (!dirHandle) {
+    auto err = errno;
+    return std::string("Error opening directory '" + directory + "': " + stringerror(err));
+  }
+
+  bool keepGoing = true;
+  struct dirent* ent = nullptr;
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): readdir is thread-safe nowadays and readdir_r is deprecated
+  while (keepGoing && (ent = readdir(dirHandle.get())) != nullptr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay: dirent API
+    auto name = std::string_view(ent->d_name, strlen(ent->d_name));
+    keepGoing = visitor(ent->d_ino, name);
+  }
+
+  return std::nullopt;
+}
+
+UniqueFilePtr openFileForWriting(const std::string& filePath, mode_t permissions, bool mustNotExist, bool appendIfExists)
+{
+  int flags = O_WRONLY | O_CREAT;
+  if (mustNotExist) {
+    flags |= O_EXCL;
+  }
+  else if (appendIfExists) {
+    flags |= O_APPEND;
+  }
+  int fileDesc = open(filePath.c_str(), flags, permissions);
+  if (fileDesc == -1) {
+    return {};
+  }
+  auto filePtr = pdns::UniqueFilePtr(fdopen(fileDesc, appendIfExists ? "a" : "w"));
+  if (!filePtr) {
+    auto error = errno;
+    close(fileDesc);
+    errno = error;
+    return {};
+  }
+  return filePtr;
+}
+
 }

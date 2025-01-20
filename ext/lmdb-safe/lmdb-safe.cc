@@ -1,9 +1,11 @@
+#include "config.h"
 #include "lmdb-safe.hh"
+
 #include <fcntl.h>
 #include <mutex>
 #include <memory>
 #include <sys/stat.h>
-#include <string.h>
+#include <cstring>
 #include <map>
 
 #ifndef DNSDIST
@@ -78,7 +80,7 @@ namespace LMDBLS {
 
 #endif /* #ifndef DNSDIST */
 
-MDBDbi::MDBDbi(MDB_env* env, MDB_txn* txn, const string_view dbname, int flags)
+MDBDbi::MDBDbi(MDB_env* /* env */, MDB_txn* txn, const string_view dbname, int flags) : d_dbi(-1)
 {
   // A transaction that uses this function must finish (either commit or abort) before any other transaction in the process may use this function.
 

@@ -142,29 +142,13 @@ static void bareHandlerWrapper(const WebServer::HandlerFunction& handler, YaHTTP
   handler(static_cast<HttpRequest*>(req), static_cast<HttpResponse*>(resp));
 }
 
-void WebServer::registerBareHandler(const string& url, const HandlerFunction& handler)
+void WebServer::registerBareHandler(const string& url, const HandlerFunction& handler, const std::string& method)
 {
   YaHTTP::THandlerFunction f = [=](YaHTTP::Request* req, YaHTTP::Response* resp){return bareHandlerWrapper(handler, req, resp);};
-  YaHTTP::Router::Any(url, std::move(f));
-}
-
-static bool optionsHandler(HttpRequest* req, HttpResponse* resp) {
-  if (req->method == "OPTIONS") {
-    resp->headers["access-control-allow-origin"] = "*";
-    resp->headers["access-control-allow-headers"] = "Content-Type, X-API-Key";
-    resp->headers["access-control-allow-methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
-    resp->headers["access-control-max-age"] = "3600";
-    resp->status = 200;
-    resp->headers["content-type"]= "text/plain";
-    resp->body = "";
-    return true;
-  }
-  return false;
+  YaHTTP::Router::Map(method, url, std::move(f));
 }
 
 void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp, bool allowPassword) {
-  if (optionsHandler(req, resp)) return;
-
   resp->headers["access-control-allow-origin"] = "*";
 
   if (!d_apikey) {
@@ -215,9 +199,9 @@ void WebServer::apiWrapper(const WebServer::HandlerFunction& handler, HttpReques
   }
 }
 
-void WebServer::registerApiHandler(const string& url, const HandlerFunction& handler, bool allowPassword) {
+void WebServer::registerApiHandler(const string& url, const HandlerFunction& handler, const std::string& method, bool allowPassword) {
   auto f = [=](HttpRequest *req, HttpResponse* resp){apiWrapper(handler, req, resp, allowPassword);};
-  registerBareHandler(url, f);
+  registerBareHandler(url, f, method);
 }
 
 void WebServer::webWrapper(const WebServer::HandlerFunction& handler, HttpRequest* req, HttpResponse* resp) {
@@ -233,12 +217,13 @@ void WebServer::webWrapper(const WebServer::HandlerFunction& handler, HttpReques
   handler(req, resp);
 }
 
-void WebServer::registerWebHandler(const string& url, const HandlerFunction& handler) {
+void WebServer::registerWebHandler(const string& url, const HandlerFunction& handler, const std::string& method) {
   auto f = [=](HttpRequest *req, HttpResponse *resp){webWrapper(handler, req, resp);};
-  registerBareHandler(url, f);
+  registerBareHandler(url, f, method);
 }
 
-static void *WebServerConnectionThreadStart(const WebServer* webServer, std::shared_ptr<Socket> client) {
+static void* WebServerConnectionThreadStart(const WebServer* webServer, const std::shared_ptr<Socket>& client)
+{
   setThreadName("rec/webhndlr");
   const std::string msg = "Exception while serving a connection in main webserver thread";
   try {
@@ -293,10 +278,15 @@ void WebServer::handleRequest(HttpRequest& req, HttpResponse& resp) const
     }
 
     YaHTTP::THandlerFunction handler;
-    if (!YaHTTP::Router::Route(&req, handler)) {
+    YaHTTP::RoutingResult res = YaHTTP::Router::Route(&req, handler);
+
+    if (res == YaHTTP::RouteNotFound) {
       SLOG(g_log<<Logger::Debug<<req.logprefix<<"No route found for \"" << req.url.path << "\"" << endl,
            log->info(Logr::Debug, "No route found"));
       throw HttpNotFoundException();
+    }
+    if (res == YaHTTP::RouteNoMethod) {
+      throw HttpMethodNotAllowedException();
     }
 
     const string msg = "HTTP ISE Exception";
@@ -311,12 +301,12 @@ void WebServer::handleRequest(HttpRequest& req, HttpResponse& resp) const
     catch(PDNSException &e) {
       SLOG(g_log<<Logger::Error<<req.logprefix<<"HTTP ISE for \""<< req.url.path << "\": Exception: " << e.reason << endl,
            log->error(Logr::Error, e.reason, msg, "exception", Logging::Loggable("PDNSException")));
-      throw HttpInternalServerErrorException();
+      throw HttpInternalServerErrorException(e.reason);
     }
     catch(std::exception &e) {
       SLOG(g_log<<Logger::Error<<req.logprefix<<"HTTP ISE for \""<< req.url.path << "\": STL Exception: " << e.what() << endl,
            log->error(Logr::Error, e.what(), msg, "exception", Logging::Loggable("std::exception")));
-      throw HttpInternalServerErrorException();
+      throw HttpInternalServerErrorException(e.what());
     }
     catch(...) {
       SLOG(g_log<<Logger::Error<<req.logprefix<<"HTTP ISE for \""<< req.url.path << "\": Unknown Exception" << endl,
@@ -346,7 +336,7 @@ void WebServer::handleRequest(HttpRequest& req, HttpResponse& resp) const
       resp.body = "<!html><title>" + what + "</title><h1>" + what + "</h1>";
     } else {
       resp.headers["Content-Type"] = "text/plain; charset=utf-8";
-      resp.body = what;
+      resp.body = std::move(what);
     }
   }
 
@@ -385,7 +375,7 @@ void WebServer::logRequest(const HttpRequest& req, [[maybe_unused]] const ComboA
 #ifdef RECURSOR
     if (!g_slogStructured) {
 #endif
-      auto logprefix = req.logprefix;
+      const auto& logprefix = req.logprefix;
       g_log<<Logger::Notice<<logprefix<<"Request details:"<<endl;
 
       bool first = true;
@@ -530,16 +520,15 @@ void WebServer::serveConnection(const std::shared_ptr<Socket>& client) const {
     YaHTTP::AsyncRequestLoader yarl;
     yarl.initialize(&req);
     req.max_request_size=d_maxbodysize;
-    int timeout = 5;
+    int timeout = d_connectiontimeout;
     client->setNonBlocking();
 
     try {
       while(!req.complete) {
-        int bytes;
-        char buf[16000];
-        bytes = client->readWithTimeout(buf, sizeof(buf), timeout);
+        std::array<char, 16000> buf{};
+        auto bytes = client->readWithTimeout(buf.data(), buf.size(), timeout);
         if (bytes > 0) {
-          string data = string(buf, bytes);
+          string data = string(buf.data(), bytes);
           req.complete = yarl.feed(data);
         } else {
           // read error OR EOF
@@ -598,8 +587,39 @@ WebServer::WebServer(string listenaddress, int port) :
   d_listenaddress(std::move(listenaddress)),
   d_port(port),
   d_server(nullptr),
-  d_maxbodysize(2*1024*1024)
+  d_maxbodysize(2*1024*1024),
+  d_connectiontimeout(5)
 {
+    YaHTTP::Router::Map("OPTIONS", "/<*url>", [](YaHTTP::Request *req, YaHTTP::Response *resp) {
+      // look for url in routes
+      bool seen = false;
+      std::vector<std::string> methods;
+      for(const auto& route: YaHTTP::Router::GetRoutes()) {
+         const auto& method = std::get<0>(route);
+         const auto& url = std::get<1>(route);
+         if (method == "OPTIONS") {
+            continue;
+         }
+         std::map<std::string, YaHTTP::TDelim> params;
+         if (YaHTTP::Router::Match(url, req->url, params)) {
+            methods.push_back(method);
+            seen = true;
+         }
+       }
+       if (!seen) {
+          resp->status = 404;
+          resp->body = "";
+          return;
+       }
+       methods.emplace_back("OPTIONS");
+       resp->headers["access-control-allow-origin"] = "*";
+       resp->headers["access-control-allow-headers"] = "Content-Type, X-API-Key";
+       resp->headers["access-control-allow-methods"] = boost::algorithm::join(methods, ", ");
+       resp->headers["access-control-max-age"] = "3600";
+       resp->status = 200;
+       resp->headers["content-type"]= "text/plain";
+       resp->body = "";
+    }, "OptionsHandlerRoute");
 }
 
 void WebServer::bind()

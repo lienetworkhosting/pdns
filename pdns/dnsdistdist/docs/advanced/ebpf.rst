@@ -1,19 +1,22 @@
 eBPF Socket Filtering
 =====================
 
-:program:`dnsdist` can use `eBPF <http://www.brendangregg.com/ebpf.html>`_ socket filtering on recent Linux kernels (4.1+) built with eBPF support (``CONFIG_BPF``, ``CONFIG_BPF_SYSCALL``, ideally ``CONFIG_BPF_JIT``). It requires dnsdist to have the ``CAP_SYS_ADMIN`` capabilities at startup, or the more restrictive ``CAP_BPF`` one since Linux 5.8.
+:program:`dnsdist` can use `eBPF <http://www.brendangregg.com/ebpf.html>`_ socket filtering on recent Linux kernels (4.1+) built with eBPF support (``CONFIG_BPF``, ``CONFIG_BPF_SYSCALL``, ideally ``CONFIG_BPF_JIT``). It requires dnsdist to have the ``CAP_SYS_ADMIN`` capabilities at startup.
 
 .. note::
-   To retain the required capability, ``CAP_SYS_ADMIN`` or ``CAP_BPF`` depending on the Linux kernel version, it is necessary to call :func:`addCapabilitiesToRetain` during startup, as :program:`dnsdist` drops capabilities after startup.
+   To retain the required capability, ``CAP_SYS_ADMIN``, it is necessary to call :func:`addCapabilitiesToRetain` during startup, as :program:`dnsdist` drops capabilities after startup.
 
 .. note::
-   eBPF can be used by unprivileged users lacking the ``CAP_SYS_ADMIN`` (or ``CAP_BPF``) capability on some kernels, depending on the value of the ``kernel.unprivileged_bpf_disabled`` sysctl. Since 5.15 that kernel build setting ``BPF_UNPRIV_DEFAULT_OFF`` is enabled by default, which prevents unprivileged users from using eBPF.
+   eBPF can be used by unprivileged users lacking the ``CAP_SYS_ADMIN`` capability on some kernels, depending on the value of the ``kernel.unprivileged_bpf_disabled`` sysctl. Since 5.15 that kernel build setting ``BPF_UNPRIV_DEFAULT_OFF`` is enabled by default, which prevents unprivileged users from using eBPF.
 
 .. note::
-   ``AppArmor`` users might need to update their policy to allow dnsdist to keep the ``CAP_SYS_ADMIN`` (or ``CAP_BPF``) capability. Adding a ``capability bpf,`` (for ``CAP_BPF``) line to the policy file is usually enough.
+   ``AppArmor`` users might need to update their policy to allow dnsdist to keep the ``CAP_SYS_ADMIN`` capability. Adding a ``capability sys_admin,`` line to the policy file is usually enough.
 
 .. note::
    In addition to keeping the correct capability, large maps might require an increase of ``RLIMIT_MEMLOCK``, as mentioned below.
+
+.. warning::
+   As of 1.9.7, eBPF filtering is not supported for QUIC-based protocols, including DNS over QUIC and DNS over HTTP/3.
 
 This feature allows dnsdist to ask the kernel to discard incoming packets in kernel-space instead of them being copied to userspace just to be dropped, thus being a lot of faster. The current implementation supports dropping UDP and TCP queries based on the source IP and UDP datagrams on exact DNS names. We have not been able to implement suffix matching yet, due to a limit on the maximum number of EBPF instructions.
 
@@ -40,7 +43,7 @@ The :meth:`BPFFilter:blockQName` method can be used to block queries based on th
 Using the 255 (ANY) qtype will block all queries for the qname, regardless of the qtype.
 Contrary to source address filtering, qname filtering only works over UDP. TCP qname filtering can be done the usual way::
 
-  addAction(AndRule({TCPRule(true), makeRule("evildomain.com")}), DropAction())
+  addAction(AndRule({TCPRule(true), QNameSuffixRule("evildomain.com")}), DropAction())
 
 The :meth:`BPFFilter:attachToAllBinds` method attaches the filter to every existing bind at runtime. It cannot use at configuration time. The :func:`setDefaultBPFFilter()` should be used at configuration time.
 
@@ -129,4 +132,3 @@ The first, legacy format is still used because of the limitations of eBPF socket
 XDP programs are more powerful than eBPF socket filtering ones as they are not limited to accepting or denying a packet, but can immediately craft and send an answer. They are also executed a bit earlier in the kernel networking path so can provide better performance.
 
 A sample program using the maps populated by dnsdist in an external XDP program can be found in the `contrib/ directory of our git repository <https://github.com/PowerDNS/pdns/tree/master/contrib>`__. That program supports answering with a TC=1 response instead of simply dropping the packet.
-

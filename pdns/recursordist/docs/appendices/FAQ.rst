@@ -66,7 +66,7 @@ Handling of root hints
 On startup, the :program:`Recursor` uses root hints to resolve the names and addresses of the root name servers and puts the record sets found into the record cache.
 This is needed to be able to resolve names, as the recursive algorithm starts at the root (using cached data) and then tries to resolve delegations until it finds the name servers that are authoritative for the domain in question.
 
-If the :ref:`setting-hint-file` is not set, :program:`Recursor` wil use a compiled-in table as root hints.
+If the :ref:`setting-hint-file` is not set, :program:`Recursor` will use a compiled-in table as root hints.
 
 Periodically, based on the :ref:`setting-max-cache-ttl`, the :program:`Recursor` will refetch the root data using data in its cache by doing a `. NS` query.
 If that does not succeed, it will fall back to using the root hints to fill the cache with root data.
@@ -86,3 +86,7 @@ With versions older than 4.8, there is another detail: after refreshing the root
 For example, in the default setup the root name servers are called ``[a-m].root-servers.net``, so the :program:`Recursor` will resolve the name servers of the ``.net`` domain.
 This is needed to correctly determine zone cuts to be able to decide if the ``.root-servers.net`` domain is DNSSEC protected. Newer versions solve this by querying the needed information top-down.
 
+Starting with version 5.0.0, enabling :ref:`setting-allow-no-rd` allows for queries without the recursion desired bit to be answered from cache.
+Older versions of the ``dig`` program provided by ISC do not set the RD bit on the initial ``+trace`` query causing it to sometimes fail to perform a ``+trace`` when asking a freshly restarted :program:`Recursor` despite the :ref:`setting-allow-no-rd` option being set.
+This is because there is a short while after restarting that the cache has no authoritative data on the root, so it will answer with an NODATA (NOERROR and no answer records) in that period for RD=0 queries asking for the root name servers.
+For ``dig`` this has been fixed in `BIND 9.15.1 <https://gitlab.isc.org/isc-projects/bind9/-/issues/1028>`_ by setting the RD bit.

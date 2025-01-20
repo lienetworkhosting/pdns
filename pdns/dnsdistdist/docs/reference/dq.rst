@@ -131,6 +131,14 @@ This state can be modified from the various hooks.
 
     :returns: A table of EDNSOptionView objects, indexed on the ECS Option code
 
+  .. method:: DNSQuestion::getElapsedUs -> double
+
+     .. versionadded:: 1.9.8
+
+     Return the amount of time that has elapsed since the query was received.
+
+     :returns: A double indicating elapsed time in microseconds
+
   .. method:: DNSQuestion:getHTTPHeaders() -> table
 
     .. versionadded:: 1.4.0
@@ -266,7 +274,7 @@ This state can be modified from the various hooks.
         dq:setContent(raw)
         return DNSAction.Allow
       end
-      addAction(AndRule({QTypeRule(DNSQType.A), makeRule('custom.async.tests.powerdns.com')}), LuaAction(replaceQueryPayload))
+      addAction(AndRule({QTypeRule(DNSQType.A), QNameSuffixRule('custom.async.tests.powerdns.com')}), LuaAction(replaceQueryPayload))
 
     :param string data: The raw DNS payload
 
@@ -278,6 +286,15 @@ This state can be modified from the various hooks.
 
     :param int code: The EDNS option code
     :param string data: The EDNS option raw data
+
+  .. method:: DNSQuestion:setExtendedDNSError(infoCode [, extraText])
+
+    .. versionadded:: 1.9.0
+
+      Set an Extended DNS Error status that will be added to the response corresponding to the current query.
+
+    :param int infoCode: The EDNS Extended DNS Error code
+    :param string extraText: The optional EDNS Extended DNS Error extra text
 
   .. method:: DNSQuestion:setHTTPResponse(status, body, contentType="")
 
@@ -353,9 +370,12 @@ This state can be modified from the various hooks.
     :param string tail: The new data
     :returns: true if the operation succeeded, false otherwise
 
-  .. method:: DNSQuestion:spoof(ip|ips|raw|raws)
+  .. method:: DNSQuestion:spoof(ip|ips|raw|raws [, typeForAny])
 
     .. versionadded:: 1.6.0
+
+    .. versionchanged:: 1.9.0
+      Optional parameter ``typeForAny`` added.
 
     Forge a response with the specified record data as raw bytes. If you specify list of raws (it is assumed they match the query type), all will get spoofed in.
 
@@ -363,6 +383,7 @@ This state can be modified from the various hooks.
     :param table ComboAddresses ips: The `ComboAddress`es to be spoofed, e.g. `{ newCA("192.0.2.1"), newCA("192.0.2.2") }`.
     :param string raw: The raw string to be spoofed, e.g. `"\\192\\000\\002\\001"`.
     :param table raws: The raw strings to be spoofed, e.g. `{ "\\192\\000\\002\\001", "\\192\\000\\002\\002" }`.
+    :param int typeForAny: The type to use for raw responses when the requested type is ``ANY``, as using ``ANY`` for the type of the response record would not make sense.
 
   .. method:: DNSQuestion:suspend(asyncID, queryID, timeoutMS) -> bool
 

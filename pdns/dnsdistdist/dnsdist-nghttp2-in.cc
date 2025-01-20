@@ -20,12 +20,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "base64.hh"
+#include "dnsdist-dnsparser.hh"
+#include "dnsdist-doh-common.hh"
 #include "dnsdist-nghttp2-in.hh"
 #include "dnsdist-proxy-protocol.hh"
 #include "dnsparser.hh"
 
-#ifdef HAVE_NGHTTP2
+#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
 
 #if 0
 class IncomingDoHCrossProtocolContext : public CrossProtocolContext
@@ -197,10 +198,11 @@ void IncomingHTTP2Connection::handleResponse(const struct timeval& now, TCPRespo
     if (responseDH.get()->tc && state.d_packet && state.d_packet->size() > state.d_proxyProtocolPayloadSize && state.d_packet->size() - state.d_proxyProtocolPayloadSize > sizeof(dnsheader)) {
       vinfolog("Response received from backend %s via UDP, for query %d received from %s via DoH, is truncated, retrying over TCP", response.d_ds->getNameWithAddr(), state.d_streamID, state.origRemote.toStringWithPort());
       auto& query = *state.d_packet;
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      auto* queryDH = reinterpret_cast<struct dnsheader*>(&query.at(state.d_proxyProtocolPayloadSize));
-      /* restoring the original ID */
-      queryDH->id = state.origID;
+      dnsdist::PacketMangling::editDNSHeaderFromRawPacket(&query.at(state.d_proxyProtocolPayloadSize), [origID = state.origID](dnsheader& header) {
+        /* restoring the original ID */
+        header.id = origID;
+        return true;
+      });
 
       state.forwardedOverUDP = false;
       bool proxyProtocolPayloadAdded = state.d_proxyProtocolPayloadSize > 0;
@@ -220,8 +222,10 @@ void IncomingHTTP2Connection::handleResponse(const struct timeval& now, TCPRespo
 
 std::unique_ptr<DOHUnitInterface> IncomingHTTP2Connection::getDOHUnit(uint32_t streamID)
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(streamID <= std::numeric_limits<IncomingHTTP2Connection::StreamID>::max());
+  if (streamID > std::numeric_limits<IncomingHTTP2Connection::StreamID>::max()) {
+    throw std::runtime_error("Invalid stream ID while retrieving DoH unit");
+  }
+
   // NOLINTNEXTLINE(*-narrowing-conversions): generic interface between DNS and DoH with different types
   auto query = std::move(d_currentStreams.at(static_cast<IncomingHTTP2Connection::StreamID>(streamID)));
   return std::make_unique<IncomingDoHCrossProtocolContext>(std::move(query), std::dynamic_pointer_cast<IncomingHTTP2Connection>(shared_from_this()), streamID);
@@ -269,6 +273,16 @@ bool IncomingHTTP2Connection::checkALPN()
   if (protocols.size() == h2ALPN.size() && memcmp(protocols.data(), h2ALPN.data(), h2ALPN.size()) == 0) {
     return true;
   }
+
+  constexpr std::array<uint8_t, 8> http11ALPN{'h', 't', 't', 'p', '/', '1', '.', '1'};
+  if (protocols.size() == http11ALPN.size() && memcmp(protocols.data(), http11ALPN.data(), http11ALPN.size()) == 0) {
+    ++d_ci.cs->dohFrontend->d_http1Stats.d_nbQueries;
+  }
+
+  const std::string data("HTTP/1.1 400 Bad Request\r\nConnection: Close\r\n\r\n<html><body>This server implements RFC 8484 - DNS Queries over HTTP, and requires HTTP/2 in accordance with section 5.2 of the RFC.</body></html>\r\n");
+  d_out.insert(d_out.end(), data.begin(), data.end());
+  writeToSocket(false);
+
   vinfolog("DoH connection from %s expected ALPN value 'h2', got '%s'", d_ci.remote.toStringWithPort(), std::string(protocols.begin(), protocols.end()));
   return false;
 }
@@ -305,7 +319,7 @@ IOState IncomingHTTP2Connection::handleHandshake(const struct timeval& now)
       }
     }
 
-    if (!isProxyPayloadOutsideTLS() && expectProxyProtocolFrom(d_ci.remote)) {
+    if (d_ci.cs != nullptr && d_ci.cs->d_enableProxyProtocol && !isProxyPayloadOutsideTLS() && expectProxyProtocolFrom(d_ci.remote)) {
       d_state = State::readingProxyProtocolHeader;
       d_buffer.resize(s_proxyProtocolMinimumHeaderSize);
       d_proxyProtocolNeed = s_proxyProtocolMinimumHeaderSize;
@@ -318,6 +332,27 @@ IOState IncomingHTTP2Connection::handleHandshake(const struct timeval& now)
   return iostate;
 }
 
+class ReadFunctionGuard
+{
+public:
+  ReadFunctionGuard(bool& inReadFunction) :
+    d_inReadFunctionRef(inReadFunction)
+  {
+    d_inReadFunctionRef = true;
+  }
+  ReadFunctionGuard(ReadFunctionGuard&&) = delete;
+  ReadFunctionGuard(const ReadFunctionGuard&) = delete;
+  ReadFunctionGuard& operator=(ReadFunctionGuard&&) = delete;
+  ReadFunctionGuard& operator=(const ReadFunctionGuard&) = delete;
+  ~ReadFunctionGuard()
+  {
+    d_inReadFunctionRef = false;
+  }
+
+private:
+  bool& d_inReadFunctionRef;
+};
+
 void IncomingHTTP2Connection::handleIO()
 {
   IOState iostate = IOState::Done;
@@ -327,7 +362,7 @@ void IncomingHTTP2Connection::handleIO()
   gettimeofday(&now, nullptr);
 
   try {
-    if (maxConnectionDurationReached(g_maxTCPConnectionDuration, now)) {
+    if (maxConnectionDurationReached(dnsdist::configuration::getCurrentRuntimeConfiguration().d_maxTCPConnectionDuration, now)) {
       vinfolog("Terminating DoH connection from %s because it reached the maximum TCP connection duration", d_ci.remote.toStringWithPort());
       stopIO();
       d_connectionClosing = true;
@@ -335,7 +370,10 @@ void IncomingHTTP2Connection::handleIO()
     }
 
     if (d_state == State::starting) {
-      if (isProxyPayloadOutsideTLS() && expectProxyProtocolFrom(d_ci.remote)) {
+      if (d_ci.cs != nullptr && d_ci.cs->dohFrontend != nullptr) {
+        ++d_ci.cs->dohFrontend->d_httpconnects;
+      }
+      if (d_ci.cs != nullptr && d_ci.cs->d_enableProxyProtocol && isProxyPayloadOutsideTLS() && expectProxyProtocolFrom(d_ci.remote)) {
         d_state = State::readingProxyProtocolHeader;
         d_buffer.resize(s_proxyProtocolMinimumHeaderSize);
         d_proxyProtocolNeed = s_proxyProtocolMinimumHeaderSize;
@@ -363,9 +401,6 @@ void IncomingHTTP2Connection::handleIO()
           }
         }
         else {
-          d_currentPos = 0;
-          d_proxyProtocolNeed = 0;
-          d_buffer.clear();
           d_state = State::waitingForQuery;
           handleConnectionReady();
         }
@@ -377,10 +412,10 @@ void IncomingHTTP2Connection::handleIO()
       }
     }
 
-    if (active() && !d_connectionClosing && (d_state == State::waitingForQuery || d_state == State::idle)) {
+    if (!d_inReadFunction && active() && !d_connectionClosing && (d_state == State::waitingForQuery || d_state == State::idle)) {
       do {
         iostate = readHTTPData();
-      } while (active() && !d_connectionClosing && iostate == IOState::Done);
+      } while (!d_inReadFunction && active() && !d_connectionClosing && iostate == IOState::Done);
     }
 
     if (!active()) {
@@ -515,8 +550,9 @@ void NGHTTP2Headers::addDynamicHeader(std::vector<nghttp2_nv>& headers, NGHTTP2H
 
 IOState IncomingHTTP2Connection::sendResponse(const struct timeval& now, TCPResponse&& response)
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(response.d_idstate.d_streamID != -1);
+  if (response.d_idstate.d_streamID == -1) {
+    throw std::runtime_error("Invalid DoH stream ID while sending response");
+  }
   auto& context = d_currentStreams.at(response.d_idstate.d_streamID);
 
   uint32_t statusCode = 200U;
@@ -532,8 +568,9 @@ IOState IncomingHTTP2Connection::sendResponse(const struct timeval& now, TCPResp
     responseBuffer = std::move(response.d_buffer);
   }
 
+  auto sent = responseBuffer.size();
   sendResponse(response.d_idstate.d_streamID, context, statusCode, d_ci.cs->dohFrontend->d_customResponseHeaders, contentType, sendContentType);
-  handleResponseSent(response);
+  handleResponseSent(response, sent);
 
   return hasPendingWrite() ? IOState::NeedWrite : IOState::Done;
 }
@@ -547,8 +584,10 @@ void IncomingHTTP2Connection::notifyIOError(const struct timeval& now, TCPRespon
     return;
   }
 
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay): clang-tidy is getting confused by assert()
-  assert(response.d_idstate.d_streamID != -1);
+  if (response.d_idstate.d_streamID == -1) {
+    throw std::runtime_error("Invalid DoH stream ID while handling I/O error notification");
+  }
+
   auto& context = d_currentStreams.at(response.d_idstate.d_streamID);
   context.d_buffer = std::move(response.d_buffer);
   sendResponse(response.d_idstate.d_streamID, context, 502, d_ci.cs->dohFrontend->d_customResponseHeaders);
@@ -738,66 +777,6 @@ static void processForwardedForHeader(const std::unique_ptr<HeadersMap>& headers
   }
 }
 
-static std::optional<PacketBuffer> getPayloadFromPath(const std::string_view& path)
-{
-  std::optional<PacketBuffer> result{std::nullopt};
-
-  if (path.size() <= 5) {
-    return result;
-  }
-
-  auto pos = path.find("?dns=");
-  if (pos == string::npos) {
-    pos = path.find("&dns=");
-  }
-
-  if (pos == string::npos) {
-    return result;
-  }
-
-  // need to base64url decode this
-  string sdns;
-  const size_t payloadSize = path.size() - pos - 5;
-  size_t neededPadding = 0;
-  switch (payloadSize % 4) {
-  case 2:
-    neededPadding = 2;
-    break;
-  case 3:
-    neededPadding = 1;
-    break;
-  }
-  sdns.reserve(payloadSize + neededPadding);
-  sdns = path.substr(pos + 5);
-  for (auto& entry : sdns) {
-    switch (entry) {
-    case '-':
-      entry = '+';
-      break;
-    case '_':
-      entry = '/';
-      break;
-    }
-  }
-
-  if (neededPadding != 0) {
-    // re-add padding that may have been missing
-    sdns.append(neededPadding, '=');
-  }
-
-  PacketBuffer decoded;
-  /* rough estimate so we hopefully don't need a new allocation later */
-  /* We reserve at few additional bytes to be able to add EDNS later */
-  const size_t estimate = ((sdns.size() * 3) / 4);
-  decoded.reserve(estimate);
-  if (B64Decode(sdns, decoded) < 0) {
-    return result;
-  }
-
-  result = std::move(decoded);
-  return result;
-}
-
 void IncomingHTTP2Connection::handleIncomingQuery(IncomingHTTP2Connection::PendingQuery&& query, IncomingHTTP2Connection::StreamID streamID)
 {
   const auto handleImmediateResponse = [this, &query, streamID](uint16_t code, const std::string& reason, PacketBuffer&& response = PacketBuffer()) {
@@ -823,8 +802,7 @@ void IncomingHTTP2Connection::handleIncomingQuery(IncomingHTTP2Connection::Pendi
     processForwardedForHeader(query.d_headers, d_proxiedRemote);
 
     /* second ACL lookup based on the updated address */
-    auto& holders = d_threadData.holders;
-    if (!holders.acl->match(d_proxiedRemote)) {
+    if (!dnsdist::configuration::getCurrentRuntimeConfiguration().d_ACL.match(d_proxiedRemote)) {
       ++dnsdist::metrics::g_stats.aclDrops;
       vinfolog("Query from %s (%s) (DoH) dropped because of ACL", d_ci.remote.toStringWithPort(), d_proxiedRemote.toStringWithPort());
       handleImmediateResponse(403, "DoH query not allowed because of ACL");
@@ -876,7 +854,7 @@ void IncomingHTTP2Connection::handleIncomingQuery(IncomingHTTP2Connection::Pendi
   }
 
   if (query.d_buffer.empty() && query.d_method == PendingQuery::Method::Get && !query.d_queryString.empty()) {
-    auto payload = getPayloadFromPath(query.d_queryString);
+    auto payload = dnsdist::doh::getPayloadFromPath(query.d_queryString);
     if (payload) {
       query.d_buffer = std::move(*payload);
     }
@@ -942,6 +920,9 @@ int IncomingHTTP2Connection::on_frame_recv_callback(nghttp2_session* session, co
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   }
+  else if (frame->hd.type == NGHTTP2_PING) {
+    conn->d_needFlush = true;
+  }
 
   return 0;
 }
@@ -1000,7 +981,7 @@ int IncomingHTTP2Connection::on_header_callback(nghttp2_session* session, const 
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
 
-#if HAVE_NGHTTP2_CHECK_HEADER_VALUE_RFC9113
+#ifdef HAVE_NGHTTP2_CHECK_HEADER_VALUE_RFC9113
     if (nghttp2_check_header_value_rfc9113(value, valuelen) == 0) {
       vinfolog("Invalid header value");
       return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1020,7 +1001,7 @@ int IncomingHTTP2Connection::on_header_callback(nghttp2_session* session, const 
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): nghttp2 API
     auto valueView = std::string_view(reinterpret_cast<const char*>(value), valuelen);
     if (headerMatches(s_pathHeaderName)) {
-#if HAVE_NGHTTP2_CHECK_PATH
+#ifdef HAVE_NGHTTP2_CHECK_PATH
       if (nghttp2_check_path(value, valuelen) == 0) {
         vinfolog("Invalid path value");
         return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1109,6 +1090,11 @@ int IncomingHTTP2Connection::on_error_callback(nghttp2_session* session, int lib
 
 IOState IncomingHTTP2Connection::readHTTPData()
 {
+  if (d_inReadFunction) {
+    return IOState::Done;
+  }
+  ReadFunctionGuard readGuard(d_inReadFunction);
+
   IOState newState = IOState::Done;
   size_t got = 0;
   if (d_in.size() < s_initialReceiveBufferSize) {
@@ -1152,7 +1138,9 @@ void IncomingHTTP2Connection::handleWritableIOCallback([[maybe_unused]] int desc
 
 void IncomingHTTP2Connection::stopIO()
 {
-  d_ioState->reset();
+  if (d_ioState) {
+    d_ioState->reset();
+  }
 }
 
 uint32_t IncomingHTTP2Connection::getConcurrentStreamsCount() const
@@ -1162,17 +1150,18 @@ uint32_t IncomingHTTP2Connection::getConcurrentStreamsCount() const
 
 boost::optional<struct timeval> IncomingHTTP2Connection::getIdleClientReadTTD(struct timeval now) const
 {
+  const auto& currentConfig = dnsdist::configuration::getCurrentRuntimeConfiguration();
   auto idleTimeout = d_ci.cs->dohFrontend->d_idleTimeout;
-  if (g_maxTCPConnectionDuration == 0 && idleTimeout == 0) {
+  if (currentConfig.d_maxTCPConnectionDuration == 0 && idleTimeout == 0) {
     return boost::none;
   }
 
-  if (g_maxTCPConnectionDuration > 0) {
+  if (currentConfig.d_maxTCPConnectionDuration > 0) {
     auto elapsed = now.tv_sec - d_connectionStartTime.tv_sec;
-    if (elapsed < 0 || (static_cast<size_t>(elapsed) >= g_maxTCPConnectionDuration)) {
+    if (elapsed < 0 || (static_cast<size_t>(elapsed) >= currentConfig.d_maxTCPConnectionDuration)) {
       return now;
     }
-    auto remaining = g_maxTCPConnectionDuration - elapsed;
+    auto remaining = currentConfig.d_maxTCPConnectionDuration - elapsed;
     if (idleTimeout == 0 || remaining <= static_cast<size_t>(idleTimeout)) {
       now.tv_sec += static_cast<time_t>(remaining);
       return now;
@@ -1183,32 +1172,44 @@ boost::optional<struct timeval> IncomingHTTP2Connection::getIdleClientReadTTD(st
   return now;
 }
 
+void IncomingHTTP2Connection::updateIO(IOState newState, const timeval& now)
+{
+  (void)now;
+  updateIO(newState, newState == IOState::NeedWrite ? handleWritableIOCallback : handleReadableIOCallback);
+}
+
 void IncomingHTTP2Connection::updateIO(IOState newState, const FDMultiplexer::callbackfunc_t& callback)
 {
   boost::optional<struct timeval> ttd{boost::none};
 
-  auto shared = std::dynamic_pointer_cast<IncomingHTTP2Connection>(shared_from_this());
-  if (shared) {
-    struct timeval now
-    {
-    };
-    gettimeofday(&now, nullptr);
+  if (newState == IOState::Async) {
+    auto shared = shared_from_this();
+    updateIOForAsync(shared);
+    return;
+  }
 
-    if (newState == IOState::NeedRead) {
-      /* use the idle TTL if the handshake has been completed (and proxy protocol payload received, if any),
-         and we have processed at least one query, otherwise we use the shorter read TTL  */
-      if ((d_state == State::waitingForQuery || d_state == State::idle) && (d_queriesCount > 0 || d_currentQueriesCount > 0)) {
-        ttd = getIdleClientReadTTD(now);
-      }
-      else {
-        ttd = getClientReadTTD(now);
-      }
-      d_ioState->update(newState, callback, shared, ttd);
+  auto shared = std::dynamic_pointer_cast<IncomingHTTP2Connection>(shared_from_this());
+  if (!shared || !d_ioState) {
+    return;
+  }
+
+  timeval now{};
+  gettimeofday(&now, nullptr);
+
+  if (newState == IOState::NeedRead) {
+    /* use the idle TTL if the handshake has been completed (and proxy protocol payload received, if any),
+       and we have processed at least one query, otherwise we use the shorter read TTL  */
+    if ((d_state == State::waitingForQuery || d_state == State::idle) && (d_queriesCount > 0 || d_currentQueriesCount > 0)) {
+      ttd = getIdleClientReadTTD(now);
     }
-    else if (newState == IOState::NeedWrite) {
-      ttd = getClientWriteTTD(now);
-      d_ioState->update(newState, callback, shared, ttd);
+    else {
+      ttd = getClientReadTTD(now);
     }
+    d_ioState->update(newState, callback, shared, ttd);
+  }
+  else if (newState == IOState::NeedWrite) {
+    ttd = getClientWriteTTD(now);
+    d_ioState->update(newState, callback, shared, ttd);
   }
 }
 
@@ -1227,4 +1228,4 @@ bool IncomingHTTP2Connection::active() const
   return !d_connectionDied && d_ioState != nullptr;
 }
 
-#endif /* HAVE_NGHTTP2 */
+#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */

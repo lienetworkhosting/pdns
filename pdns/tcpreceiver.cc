@@ -131,12 +131,14 @@ static int readnWithTimeout(int fd, void* buffer, unsigned int n, unsigned int i
     bytes -= ret;
     if (totalTimeout) {
       time_t now = time(nullptr);
-      unsigned int elapsed = now - start;
-      if (elapsed >= remainingTotal) {
+      const auto elapsed = now - start;
+      if (elapsed >= static_cast<time_t>(remainingTotal)) {
         throw NetworkError("Timeout while reading data");
       }
       start = now;
-      remainingTotal -= elapsed;
+      if (elapsed > 0) {
+        remainingTotal -= elapsed;
+      }
     }
   }
   return n;
@@ -200,7 +202,9 @@ static bool maxConnectionDurationReached(unsigned int maxConnectionDuration, tim
     if (elapsed >= maxConnectionDuration) {
       return true;
     }
-    remainingTime = maxConnectionDuration - elapsed;
+    if (elapsed > 0) {
+      remainingTime = static_cast<unsigned int>(maxConnectionDuration - elapsed);
+    }
   }
   return false;
 }
@@ -363,11 +367,13 @@ void TCPNameserver::doConnection(int fd)
         S.inc("tcp-cookie-queries");
 
       if(packet->qtype.getCode()==QType::AXFR) {
+        packet->d_xfr=true;
         doAXFR(packet->qdomain, packet, fd);
         continue;
       }
 
       if(packet->qtype.getCode()==QType::IXFR) {
+        packet->d_xfr=true;
         doIXFR(packet, fd);
         continue;
       }
@@ -457,18 +463,18 @@ bool TCPNameserver::canDoAXFR(std::unique_ptr<DNSPacket>& q, bool isAXFR, std::u
   string logPrefix=string(isAXFR ? "A" : "I")+"XFR-out zone '"+q->qdomain.toLogString()+"', client '"+q->getInnerRemote().toStringWithPort()+"', ";
 
   if(q->d_havetsig) { // if you have one, it must be good
-    TSIGRecordContent trc;
-    DNSName keyname;
+    TSIGRecordContent tsigContent;
+    DNSName tsigkeyname;
     string secret;
-    if(!q->checkForCorrectTSIG(packetHandler->getBackend(), &keyname, &secret, &trc)) {
+    if (!packetHandler->checkForCorrectTSIG(*q, &tsigkeyname, &secret, &tsigContent)) {
       return false;
     } else {
-      getTSIGHashEnum(trc.d_algoName, q->d_tsig_algo);
+      getTSIGHashEnum(tsigContent.d_algoName, q->d_tsig_algo);
 #ifdef ENABLE_GSS_TSIG
       if (g_doGssTSIG && q->d_tsig_algo == TSIG_GSS) {
-        GssContext gssctx(keyname);
+        GssContext gssctx(tsigkeyname);
         if (!gssctx.getPeerPrincipal(q->d_peer_principal)) {
-          g_log<<Logger::Warning<<"Failed to extract peer principal from GSS context with keyname '"<<keyname<<"'"<<endl;
+          g_log<<Logger::Warning<<"Failed to extract peer principal from GSS context with keyname '"<<tsigkeyname<<"'"<<endl;
         }
       }
 #endif
@@ -489,12 +495,12 @@ bool TCPNameserver::canDoAXFR(std::unique_ptr<DNSPacket>& q, bool isAXFR, std::u
       return false;
     }
 #endif
-    if(!dk.TSIGGrantsAccess(q->qdomain, keyname)) {
-      g_log<<Logger::Warning<<logPrefix<<"denied: key with name '"<<keyname<<"' and algorithm '"<<getTSIGAlgoName(q->d_tsig_algo)<<"' does not grant access"<<endl;
+    if(!dk.TSIGGrantsAccess(q->qdomain, tsigkeyname)) {
+      g_log<<Logger::Warning<<logPrefix<<"denied: key with name '"<<tsigkeyname<<"' and algorithm '"<<getTSIGAlgoName(q->d_tsig_algo)<<"' does not grant access"<<endl;
       return false;
     }
     else {
-      g_log<<Logger::Notice<<logPrefix<<"allowed: TSIG signed request with authorized key '"<<keyname<<"' and algorithm '"<<getTSIGAlgoName(q->d_tsig_algo)<<"'"<<endl;
+      g_log<<Logger::Notice<<logPrefix<<"allowed: TSIG signed request with authorized key '"<<tsigkeyname<<"' and algorithm '"<<getTSIGAlgoName(q->d_tsig_algo)<<"'"<<endl;
       return true;
     }
   }
@@ -1183,10 +1189,10 @@ int TCPNameserver::doIXFR(std::unique_ptr<DNSPacket>& q, int outsock)
   uint32_t serial = 0;
   MOADNSParser mdp(false, q->getString());
   for(const auto & answer : mdp.d_answers) {
-    const DNSRecord *rr = &answer.first;
-    if (rr->d_type == QType::SOA && rr->d_place == DNSResourceRecord::AUTHORITY) {
+    const DNSRecord *dnsRecord = &answer;
+    if (dnsRecord->d_type == QType::SOA && dnsRecord->d_place == DNSResourceRecord::AUTHORITY) {
       vector<string>parts;
-      stringtok(parts, rr->getContent()->getZoneRepresentation());
+      stringtok(parts, dnsRecord->getContent()->getZoneRepresentation());
       if (parts.size() >= 3) {
         try {
           pdns::checked_stoi_into(serial, parts[2]);
@@ -1203,8 +1209,8 @@ int TCPNameserver::doIXFR(std::unique_ptr<DNSPacket>& q, int outsock)
         sendPacket(outpacket,outsock);
         return 0;
       }
-    } else if (rr->d_type != QType::TSIG && rr->d_type != QType::OPT) {
-      g_log<<Logger::Warning<<logPrefix<<"additional records in IXFR query, type: "<<QType(rr->d_type).toString()<<endl;
+    } else if (dnsRecord->d_type != QType::TSIG && dnsRecord->d_type != QType::OPT) {
+      g_log<<Logger::Warning<<logPrefix<<"additional records in IXFR query, type: "<<QType(dnsRecord->d_type).toString()<<endl;
       outpacket->setRcode(RCode::FormErr);
       sendPacket(outpacket,outsock);
       return 0;
@@ -1299,10 +1305,7 @@ int TCPNameserver::doIXFR(std::unique_ptr<DNSPacket>& q, int outsock)
   return doAXFR(q->qdomain, q, outsock);
 }
 
-TCPNameserver::~TCPNameserver()
-{
-}
-
+TCPNameserver::~TCPNameserver() = default;
 TCPNameserver::TCPNameserver()
 {
   d_maxTransactionsPerConn = ::arg().asNum("max-tcp-transactions-per-conn");

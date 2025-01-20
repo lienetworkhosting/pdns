@@ -3,10 +3,11 @@ import os
 
 from recursortests import RecursorTest
 
-class DNS64RecursorTest(RecursorTest):
+class DNS64Test(RecursorTest):
 
     _confdir = 'DNS64'
     _config_template = """
+    serve-rfc6303=no
     auth-zones=example.dns64=configs/%s/example.dns64.zone
     auth-zones+=in-addr.arpa=configs/%s/in-addr.arpa.zone
     auth-zones+=ip6.arpa=configs/%s/ip6.arpa.zone
@@ -32,9 +33,11 @@ class DNS64RecursorTest(RecursorTest):
 @ 3600 IN SOA {soa}
 www 3600 IN A 192.0.2.42
 www 3600 IN TXT "does exist"
+txt 3600 IN TXT "a and aaaa do not exist"
 aaaa 3600 IN AAAA 2001:db8::1
 cname 3600 IN CNAME cname2.example.dns64.
 cname2 3600 IN CNAME www.example.dns64.
+cname3 3600 IN CNAME txt.example.dns64.
 formerr 3600 IN A 192.0.2.43
 """.format(soa=cls._SOA))
 
@@ -52,7 +55,7 @@ formerr 3600 IN A 192.0.2.43
 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2 IN PTR aaaa.example.dns64.
 """.format(soa=cls._SOA))
 
-        super(DNS64RecursorTest, cls).generateRecursorConfig(confdir)
+        super(DNS64Test, cls).generateRecursorConfig(confdir)
 
     # this type (A) exists for this name
     def testExistingA(self):
@@ -107,6 +110,22 @@ formerr 3600 IN A 192.0.2.43
             for expected in expectedResults:
                 self.assertRRsetInAnswer(res, expected)
 
+    # there is a CNAME from the name to a name that is NODATA for both A and AAAA
+    # so we should get a NODATA with a single SOA record (#14362)
+    def testCNAMEToNoData(self):
+        qname = 'cname3.example.dns64.'
+
+        expectedAnswer = dns.rrset.from_text(qname, 0, dns.rdataclass.IN, 'CNAME', 'txt.example.dns64.')
+        query = dns.message.make_query(qname, 'AAAA', want_dnssec=True)
+        for method in ("sendUDPQuery", "sendTCPQuery"):
+            sender = getattr(self, method)
+            res = sender(query, 2.0, True, {"one_rr_per_rrset": True}) # we want to detect dups
+            self.assertRcodeEqual(res, dns.rcode.NOERROR)
+            self.assertEqual(len(res.answer), 1)
+            self.assertEqual(len(res.authority), 1)
+            self.assertRRsetInAnswer(res, expectedAnswer)
+            self.assertAuthorityHasSOA(res)
+
     # this type (AAAA) does not exist for this name and there is no A record either, we should get a NXDomain
     def testNXD(self):
         qname = 'nxd.example.dns64.'
@@ -116,6 +135,18 @@ formerr 3600 IN A 192.0.2.43
             sender = getattr(self, method)
             res = sender(query)
             self.assertRcodeEqual(res, dns.rcode.NXDOMAIN)
+
+    # this type (AAAA) does not exist for this name and there is no A record either, we should get a NODATA as TXT does exist
+    def testNoData(self):
+        qname = 'txt.example.dns64.'
+
+        query = dns.message.make_query(qname, 'AAAA', want_dnssec=True)
+        for method in ("sendUDPQuery", "sendTCPQuery"):
+            sender = getattr(self, method)
+            res = sender(query, 2.0, True, {"one_rr_per_rrset": True}) # we want to detect dups
+            self.assertRcodeEqual(res, dns.rcode.NOERROR)
+            self.assertEqual(len(res.answer), 0)
+            self.assertEqual(len(res.authority), 1)
 
     # there is an AAAA record, we should get it
     def testExistingAAAA(self):

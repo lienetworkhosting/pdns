@@ -23,10 +23,8 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-#if HAVE_BOOST_GE_148
-#include "histog.hh"
-#endif
 
+#include "histog.hh"
 #include "statbag.hh"
 #include "dnspcap.hh"
 #include "dnsparser.hh"
@@ -139,10 +137,8 @@ try
     ("rd", po::value<bool>(), "If set to true, only process RD packets, to false only non-RD, unset: both")
     ("ipv4", po::value<bool>()->default_value(true), "Process IPv4 packets")
     ("ipv6", po::value<bool>()->default_value(true), "Process IPv6 packets")
-#if HAVE_BOOST_GE_148
     ("log-histogram", "Write a log-histogram to file 'log-histogram'")
     ("full-histogram", po::value<double>(), "Write a log-histogram to file 'full-histogram' with this millisecond bin size")
-#endif
     ("filter-name,f", po::value<string>(), "Do statistics only for queries within this domain")
     ("load-stats,l", po::value<string>()->default_value(""), "if set, emit per-second load statistics (questions, answers, outstanding)")
     ("no-servfail-stats", "Don't include servfails in response time stats")
@@ -200,15 +196,25 @@ try
   bool doIPv6 = g_vm["ipv6"].as<bool>();
   bool doServFailTree = g_vm.count("servfail-tree");
   bool noservfailstats = g_vm.count("no-servfail-stats");
-  int dnserrors=0, parsefail=0;
+  int dnserrors = 0;
+  int parsefail = 0;
   typedef map<uint32_t,uint32_t> cumul_t;
   cumul_t cumul;
-  unsigned int untracked=0, errorresult=0, nonRDQueries=0, queries=0;
-  unsigned int ipv4DNSPackets=0, ipv6DNSPackets=0, fragmented=0, rdNonRAAnswers=0;
-  unsigned int answers=0, nonDNSIP=0, rdFilterMismatch=0;
-  unsigned int dnssecOK=0, edns=0;
-  unsigned int dnssecCD=0, dnssecAD=0;
-  unsigned int reuses=0;
+  unsigned int untracked = 0;
+  unsigned int nonRDQueries = 0;
+  unsigned int queries = 0;
+  unsigned int ipv4DNSPackets = 0;
+  unsigned int ipv6DNSPackets = 0;
+  unsigned int fragmented = 0;
+  unsigned int rdNonRAAnswers = 0;
+  unsigned int answers = 0;
+  unsigned int nonDNSIP = 0;
+  unsigned int rdFilterMismatch = 0;
+  unsigned int dnssecOK = 0;
+  unsigned int edns = 0;
+  unsigned int dnssecCD = 0;
+  unsigned int dnssecAD = 0;
+  unsigned int reuses = 0;
   typedef map<uint16_t,uint32_t> rcodes_t;
   rcodes_t rcodes;
 
@@ -219,7 +225,8 @@ try
   typedef vector<pair<time_t, LiveCounts> > pcounts_t;
   pcounts_t pcounts;
   const uint16_t port = g_vm["port"].as<uint16_t>();
-  OPTRecordContent::report();
+
+  reportAllTypes();
 
   for(unsigned int fno=0; fno < files.size(); ++fno) {
     PcapPacketReader pr(files[fno]);
@@ -373,8 +380,6 @@ try
             if(!noservfailstats || header.rcode != 2)
               cumul[usecs]++;
 
-            if(header.rcode != 0 && header.rcode!=3)
-              errorresult++;
             ComboAddress rem = pr.getDest();
             rem.sin4.sin_port=0;
 
@@ -464,7 +469,6 @@ try
   cout.precision(4);
   sum=0;
 
-#if HAVE_BOOST_GE_148
   if(g_vm.count("log-histogram")) {
     string fname = g_vm["stats-dir"].as<string>()+"/log-histogram";
     ofstream loglog(fname);
@@ -481,8 +485,6 @@ try
       throw runtime_error("Unable to write statistics to "+fname);
     writeFullHistogramFile(cumul, g_vm["full-histogram"].as<double>(), loglog);
   }
-#endif
-
 
   sum=0;
   double lastperc=0, perc=0;

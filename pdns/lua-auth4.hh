@@ -12,17 +12,20 @@
 class AuthLua4 : public BaseLua4
 {
 public:
-  AuthLua4();
+  AuthLua4(const std::string& includePath="") : BaseLua4(includePath) {
+    prepareContext();
+  };
   bool updatePolicy(const DNSName &qname, const QType& qtype, const DNSName &zonename, const DNSPacket& packet);
   bool axfrfilter(const ComboAddress&, const DNSName&, const DNSResourceRecord&, std::vector<DNSResourceRecord>&);
   LuaContext* getLua();
 
   std::unique_ptr<DNSPacket> prequery(const DNSPacket& p);
 
-  ~AuthLua4(); // this is so unique_ptr works with an incomplete type
+  ~AuthLua4() override; // this is so unique_ptr works with an incomplete type
 protected:
-  virtual void postPrepareContext() override;
-  virtual void postLoad() override;
+  void postPrepareContext() override;
+  void postLoad() override;
+
 private:
   struct UpdatePolicyQuery {
     DNSName qname;
@@ -42,5 +45,5 @@ private:
   luacall_axfr_filter_t d_axfr_filter;
   luacall_prequery_t d_prequery;
 };
-std::vector<shared_ptr<DNSRecordContent>> luaSynth(const std::string& code, const DNSName& qname,
-                                                   const DNSName& zone, int zoneid, const DNSPacket& dnsp, uint16_t qtype, unique_ptr<AuthLua4>& LUA);
+std::vector<shared_ptr<DNSRecordContent>> luaSynth(const std::string& code, const DNSName& query, const DNSZoneRecord& zone_record,
+                                                   const DNSName& zone, const DNSPacket& dnsp, uint16_t qtype, unique_ptr<AuthLua4>& LUA);

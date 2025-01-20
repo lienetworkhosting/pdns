@@ -10,13 +10,10 @@ class TCPClientThreadData
 {
 public:
   TCPClientThreadData():
-    localRespRuleActions(g_respruleactions.getLocal()), localCacheInsertedRespRuleActions(g_cacheInsertedRespRuleActions.getLocal()), mplexer(std::unique_ptr<FDMultiplexer>(FDMultiplexer::getMultiplexerSilent()))
+    mplexer(std::unique_ptr<FDMultiplexer>(FDMultiplexer::getMultiplexerSilent()))
   {
   }
 
-  LocalHolders holders;
-  LocalStateHolder<vector<DNSDistResponseRuleAction>> localRespRuleActions;
-  LocalStateHolder<vector<DNSDistResponseRuleAction>> localCacheInsertedRespRuleActions;
   std::unique_ptr<FDMultiplexer> mplexer{nullptr};
   pdns::channel::Receiver<ConnectionInfo> queryReceiver;
   pdns::channel::Receiver<CrossProtocolQuery> crossProtocolQueryReceiver;
@@ -30,7 +27,7 @@ public:
   enum class QueryProcessingResult : uint8_t { Forwarded, TooSmall, InvalidHeaders, Dropped, SelfAnswered, NoBackend, Asynchronous };
   enum class ProxyProtocolResult : uint8_t { Reading, Done, Error };
 
-  IncomingTCPConnectionState(ConnectionInfo&& ci, TCPClientThreadData& threadData, const struct timeval& now): d_buffer(s_maxPacketCacheEntrySize), d_ci(std::move(ci)), d_handler(d_ci.fd, timeval{g_tcpRecvTimeout,0}, d_ci.cs->tlsFrontend ? d_ci.cs->tlsFrontend->getContext() : (d_ci.cs->dohFrontend ? d_ci.cs->dohFrontend->d_tlsContext.getContext() : nullptr), now.tv_sec), d_connectionStartTime(now), d_ioState(make_unique<IOStateHandler>(*threadData.mplexer, d_ci.fd)), d_threadData(threadData), d_creatorThreadID(std::this_thread::get_id())
+  IncomingTCPConnectionState(ConnectionInfo&& ci, TCPClientThreadData& threadData, const struct timeval& now): d_buffer(sizeof(uint16_t)), d_ci(std::move(ci)), d_handler(d_ci.fd, timeval{dnsdist::configuration::getCurrentRuntimeConfiguration().d_tcpRecvTimeout,0}, d_ci.cs->tlsFrontend ? d_ci.cs->tlsFrontend->getContext() : (d_ci.cs->dohFrontend ? d_ci.cs->dohFrontend->d_tlsContext.getContext() : nullptr), now.tv_sec), d_connectionStartTime(now), d_ioState(make_unique<IOStateHandler>(*threadData.mplexer, d_ci.fd)), d_threadData(threadData), d_creatorThreadID(std::this_thread::get_id())
   {
     d_origDest.reset();
     d_origDest.sin4.sin_family = d_ci.remote.sin4.sin_family;
@@ -56,47 +53,49 @@ public:
 
   boost::optional<struct timeval> getClientReadTTD(struct timeval now) const
   {
-    if (g_maxTCPConnectionDuration == 0 && g_tcpRecvTimeout == 0) {
+    const auto& runtimeConfiguration = dnsdist::configuration::getCurrentRuntimeConfiguration();
+    if (runtimeConfiguration.d_maxTCPConnectionDuration == 0 && runtimeConfiguration.d_tcpRecvTimeout == 0) {
       return boost::none;
     }
 
-    if (g_maxTCPConnectionDuration > 0) {
+    if (runtimeConfiguration.d_maxTCPConnectionDuration > 0) {
       auto elapsed = now.tv_sec - d_connectionStartTime.tv_sec;
-      if (elapsed < 0 || (static_cast<size_t>(elapsed) >= g_maxTCPConnectionDuration)) {
+      if (elapsed < 0 || (static_cast<size_t>(elapsed) >= runtimeConfiguration.d_maxTCPConnectionDuration)) {
         return now;
       }
-      auto remaining = g_maxTCPConnectionDuration - elapsed;
-      if (g_tcpRecvTimeout == 0 || remaining <= static_cast<size_t>(g_tcpRecvTimeout)) {
+      auto remaining = runtimeConfiguration.d_maxTCPConnectionDuration - elapsed;
+      if (runtimeConfiguration.d_tcpRecvTimeout == 0 || remaining <= static_cast<size_t>(runtimeConfiguration.d_tcpRecvTimeout)) {
         now.tv_sec += remaining;
         return now;
       }
     }
 
-    now.tv_sec += g_tcpRecvTimeout;
+    now.tv_sec += runtimeConfiguration.d_tcpRecvTimeout;
     return now;
   }
 
   boost::optional<struct timeval> getClientWriteTTD(const struct timeval& now) const
   {
-    if (g_maxTCPConnectionDuration == 0 && g_tcpSendTimeout == 0) {
+    const auto& runtimeConfiguration = dnsdist::configuration::getCurrentRuntimeConfiguration();
+    if (runtimeConfiguration.d_maxTCPConnectionDuration == 0 && runtimeConfiguration.d_tcpSendTimeout == 0) {
       return boost::none;
     }
 
-    struct timeval res = now;
+    timeval res(now);
 
-    if (g_maxTCPConnectionDuration > 0) {
+    if (runtimeConfiguration.d_maxTCPConnectionDuration > 0) {
       auto elapsed = res.tv_sec - d_connectionStartTime.tv_sec;
-      if (elapsed < 0 || static_cast<size_t>(elapsed) >= g_maxTCPConnectionDuration) {
+      if (elapsed < 0 || static_cast<size_t>(elapsed) >= runtimeConfiguration.d_maxTCPConnectionDuration) {
         return res;
       }
-      auto remaining = g_maxTCPConnectionDuration - elapsed;
-      if (g_tcpSendTimeout == 0 || remaining <= static_cast<size_t>(g_tcpSendTimeout)) {
+      auto remaining = runtimeConfiguration.d_maxTCPConnectionDuration - elapsed;
+      if (runtimeConfiguration.d_tcpSendTimeout == 0 || remaining <= static_cast<size_t>(runtimeConfiguration.d_tcpSendTimeout)) {
         res.tv_sec += remaining;
         return res;
       }
     }
 
-    res.tv_sec += g_tcpSendTimeout;
+    res.tv_sec += runtimeConfiguration.d_tcpSendTimeout;
     return res;
   }
 
@@ -116,20 +115,21 @@ public:
     return false;
   }
 
-  std::shared_ptr<TCPConnectionToBackend> getOwnedDownstreamConnection(const std::shared_ptr<DownstreamState>& ds, const std::unique_ptr<std::vector<ProxyProtocolValue>>& tlvs);
-  std::shared_ptr<TCPConnectionToBackend> getDownstreamConnection(std::shared_ptr<DownstreamState>& ds, const std::unique_ptr<std::vector<ProxyProtocolValue>>& tlvs, const struct timeval& now);
+  std::shared_ptr<TCPConnectionToBackend> getOwnedDownstreamConnection(const std::shared_ptr<DownstreamState>& backend, const std::unique_ptr<std::vector<ProxyProtocolValue>>& tlvs);
+  std::shared_ptr<TCPConnectionToBackend> getDownstreamConnection(std::shared_ptr<DownstreamState>& backend, const std::unique_ptr<std::vector<ProxyProtocolValue>>& tlvs, const struct timeval& now);
   void registerOwnedDownstreamConnection(std::shared_ptr<TCPConnectionToBackend>& conn);
 
   static size_t clearAllDownstreamConnections();
 
-  static void handleIOCallback(int fd, FDMultiplexer::funcparam_t& param);
-  static void handleAsyncReady(int fd, FDMultiplexer::funcparam_t& param);
-  static void updateIO(std::shared_ptr<IncomingTCPConnectionState>& state, IOState newState, const struct timeval& now);
+  static void handleIOCallback(int desc, FDMultiplexer::funcparam_t& param);
+  static void handleAsyncReady(int desc, FDMultiplexer::funcparam_t& param);
 
   static void queueResponse(std::shared_ptr<IncomingTCPConnectionState>& state, const struct timeval& now, TCPResponse&& response, bool fromBackend);
   static void handleTimeout(std::shared_ptr<IncomingTCPConnectionState>& state, bool write);
+  static void updateIOForAsync(std::shared_ptr<IncomingTCPConnectionState>& conn);
 
   virtual void handleIO();
+  virtual void updateIO(IOState newState, const timeval& now);
 
   QueryProcessingResult handleQuery(PacketBuffer&& query, const struct timeval& now, std::optional<int32_t> streamID);
   virtual void handleResponse(const struct timeval& now, TCPResponse&& response) override;
@@ -137,7 +137,7 @@ public:
   void handleXFRResponse(const struct timeval& now, TCPResponse&& response) override;
 
   virtual IOState sendResponse(const struct timeval& now, TCPResponse&& response);
-  void handleResponseSent(TCPResponse& currentResponse);
+  void handleResponseSent(TCPResponse& currentResponse, size_t sentBytes);
   virtual IOState handleHandshake(const struct timeval& now);
   void handleHandshakeDone(const struct timeval& now);
   ProxyProtocolResult handleProxyProtocolPayload();
@@ -172,7 +172,7 @@ public:
     throw std::runtime_error("Restoring a DOHUnit state to a generic TCP/DoT connection is not supported");
   }
 
-  std::unique_ptr<CrossProtocolQuery> getCrossProtocolQuery(PacketBuffer&& query, InternalQueryState&& state, const std::shared_ptr<DownstreamState>& ds);
+  std::unique_ptr<CrossProtocolQuery> getCrossProtocolQuery(PacketBuffer&& query, InternalQueryState&& state, const std::shared_ptr<DownstreamState>& backend);
 
   std::string toString() const
   {
@@ -182,6 +182,9 @@ public:
   }
 
   dnsdist::Protocol getProtocol() const;
+  IOState handleIncomingQueryReceived(const struct timeval& now);
+  void handleExceptionDuringIO(const std::exception& exp);
+  bool readIncomingQuery(const timeval& now, IOState& iostate);
 
   enum class State : uint8_t { starting, doingHandshake, readingProxyProtocolHeader, waitingForQuery, readingQuerySize, readingQuery, sendingResponse, idle /* in case of XFR, we stop processing queries */ };
 

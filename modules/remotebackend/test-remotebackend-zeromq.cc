@@ -19,7 +19,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_MAIN
 #define BOOST_TEST_MODULE unit
 
@@ -59,7 +62,7 @@ public:
   RemoteLoader();
 };
 
-DNSBackend* be;
+std::unique_ptr<DNSBackend> backendUnderTest;
 
 #ifdef REMOTEBACKEND_ZEROMQ
 #include <boost/test/unit_test.hpp>
@@ -68,20 +71,17 @@ struct RemotebackendSetup
 {
   RemotebackendSetup()
   {
-    be = nullptr;
+    backendUnderTest = nullptr;
     try {
       // setup minimum arguments
       ::arg().set("module-dir") = "./.libs";
-      new RemoteLoader();
+      auto loader = std::make_unique<RemoteLoader>();
       BackendMakers().launch("remote");
       // then get us a instance of it
       ::arg().set("remote-connection-string") = "zeromq:endpoint=ipc:///tmp/remotebackend.0";
       ::arg().set("remote-dnssec") = "yes";
-      be = BackendMakers().all()[0];
-      // load few record types to help out
-      SOARecordContent::report();
-      NSRecordContent::report();
-      ARecordContent::report();
+      backendUnderTest = std::move(BackendMakers().all()[0]);
+      reportAllTypes();
     }
     catch (PDNSException& ex) {
       BOOST_TEST_MESSAGE("Cannot start remotebackend: " << ex.reason);

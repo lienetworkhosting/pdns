@@ -23,7 +23,6 @@ StatBag S;
 
 // Vars below used by tcpiohandler.cc
 bool g_verbose = true;
-bool g_syslog = false;
 
 static bool hidettl = false;
 
@@ -41,7 +40,6 @@ static void usage()
   cerr << "Syntax: sdig IP-ADDRESS-OR-DOH-URL PORT QNAME QTYPE "
           "[dnssec] [ednssubnet SUBNET/MASK] [hidesoadetails] [hidettl] [recurse] [showflags] "
           "[tcp] [dot] [insecure] [fastOpen] [subjectName name] [caStore file] [tlsProvider openssl|gnutls] "
-          "[xpf XPFDATA] [class CLASSNUM] "
           "[proxy UDP(0)/TCP(1) SOURCE-IP-ADDRESS-AND-PORT DESTINATION-IP-ADDRESS-AND-PORT] "
           "[dumpluaraw] [opcode OPNUM]"
        << endl;
@@ -58,10 +56,8 @@ static const string nameForClass(QClass qclass, uint16_t qtype)
 static std::unordered_set<uint16_t> s_expectedIDs;
 
 static void fillPacket(vector<uint8_t>& packet, const string& q, const string& t,
-                       bool dnssec, const boost::optional<Netmask> ednsnm,
-                       bool recurse, uint16_t xpfcode, uint16_t xpfversion,
-                       uint64_t xpfproto, char* xpfsrc, char* xpfdst,
-                       QClass qclass, uint8_t opcode, uint16_t qid)
+                       bool dnssec, const std::optional<Netmask>& ednsnm,
+                       bool recurse, QClass qclass, uint8_t opcode, uint16_t qid)
 {
   DNSPacketWriter pw(packet, DNSName(q), DNSRecordContent::TypeToNumber(t), qclass, opcode);
 
@@ -75,24 +71,11 @@ static void fillPacket(vector<uint8_t>& packet, const string& q, const string& t
     DNSPacketWriter::optvect_t opts;
     if (ednsnm) {
       EDNSSubnetOpts eo;
-      eo.source = *ednsnm;
-      opts.emplace_back(EDNSOptionCode::ECS, makeEDNSSubnetOptsString(eo));
+      eo.setSource(*ednsnm);
+      opts.emplace_back(EDNSOptionCode::ECS, eo.makeOptString());
     }
 
     pw.addOpt(bufsize, 0, dnssec ? EDNSOpts::DNSSECOK : 0, opts);
-    pw.commit();
-  }
-
-  if (xpfcode) {
-    ComboAddress src(xpfsrc), dst(xpfdst);
-    pw.startRecord(g_rootdnsname, xpfcode, 0, QClass::IN, DNSResourceRecord::ADDITIONAL);
-    // xpf->toPacket(pw);
-    pw.xfr8BitInt(xpfversion);
-    pw.xfr8BitInt(xpfproto);
-    pw.xfrCAWithoutPort(xpfversion, src);
-    pw.xfrCAWithoutPort(xpfversion, dst);
-    pw.xfrCAPort(src);
-    pw.xfrCAPort(dst);
     pw.commit();
   }
 
@@ -103,16 +86,24 @@ static void fillPacket(vector<uint8_t>& packet, const string& q, const string& t
   pw.getHeader()->id = htons(qid);
 }
 
-static void printReply(const string& reply, bool showflags, bool hidesoadetails, bool dumpluaraw)
+static void printReply(const string& reply, bool showflags, bool hidesoadetails, bool dumpluaraw, bool ignoreId = false)
 {
   MOADNSParser mdp(false, reply);
-  if (!s_expectedIDs.count(ntohs(mdp.d_header.id))) {
+
+  if (!ignoreId && (s_expectedIDs.count(ntohs(mdp.d_header.id)) == 0U)) {
     cout << "ID " << ntohs(mdp.d_header.id) << " was not expected, this response was not meant for us!"<<endl;
   }
   s_expectedIDs.erase(ntohs(mdp.d_header.id));
 
-  cout << "Reply to question for qname='" << mdp.d_qname.toString()
-       << "', qtype=" << DNSRecordContent::NumberToType(mdp.d_qtype) << endl;
+  cout << (mdp.d_header.qr ? "Reply to question" : "Question") << " for qname='" << mdp.d_qname.toString()
+       << "', qtype=" << DNSRecordContent::NumberToType(mdp.d_qtype);
+
+  if (ignoreId) {
+    // if we did not generate the ID, the user might be interested in seeing it
+    cout << ", ID=" << ntohs(mdp.d_header.id);
+  }
+
+  cout << endl;
   cout << "Rcode: " << mdp.d_header.rcode << " ("
        << RCode::to_s(mdp.d_header.rcode) << "), RD: " << mdp.d_header.rd
        << ", QR: " << mdp.d_header.qr;
@@ -121,16 +112,16 @@ static void printReply(const string& reply, bool showflags, bool hidesoadetails,
 
   for (MOADNSParser::answers_t::const_iterator i = mdp.d_answers.begin();
        i != mdp.d_answers.end(); ++i) {
-    cout << i->first.d_place - 1 << "\t" << i->first.d_name.toString() << "\t"
-         << ttl(i->first.d_ttl) << "\t" << nameForClass(i->first.d_class, i->first.d_type) << "\t"
-         << DNSRecordContent::NumberToType(i->first.d_type);
+    cout << i->d_place - 1 << "\t" << i->d_name.toString() << "\t"
+         << ttl(i->d_ttl) << "\t" << nameForClass(i->d_class, i->d_type) << "\t"
+         << DNSRecordContent::NumberToType(i->d_type);
     if (dumpluaraw) {
-      cout<<"\t"<< makeLuaString(i->first.getContent()->serialize(DNSName(), true))<<endl;
+      cout<<"\t"<< makeLuaString(i->getContent()->serialize(DNSName(), true))<<endl;
       continue;
     }
-    if (i->first.d_class == QClass::IN) {
-      if (i->first.d_type == QType::RRSIG) {
-        string zoneRep = i->first.getContent()->getZoneRepresentation();
+    if (i->d_class == QClass::IN) {
+      if (i->d_type == QType::RRSIG) {
+        string zoneRep = i->getContent()->getZoneRepresentation();
         vector<string> parts;
         stringtok(parts, zoneRep);
         cout << "\t" << parts[0] << " "
@@ -138,8 +129,8 @@ static void printReply(const string& reply, bool showflags, bool hidesoadetails,
              << " [expiry] [inception] [keytag] " << parts[7] << " ...\n";
         continue;
       }
-      if (!showflags && i->first.d_type == QType::NSEC3) {
-        string zoneRep = i->first.getContent()->getZoneRepresentation();
+      if (!showflags && i->d_type == QType::NSEC3) {
+        string zoneRep = i->getContent()->getZoneRepresentation();
         vector<string> parts;
         stringtok(parts, zoneRep);
         cout << "\t" << parts[0] << " [flags] "
@@ -150,16 +141,16 @@ static void printReply(const string& reply, bool showflags, bool hidesoadetails,
         cout << "\n";
         continue;
       }
-      if (i->first.d_type == QType::DNSKEY) {
-        string zoneRep = i->first.getContent()->getZoneRepresentation();
+      if (i->d_type == QType::DNSKEY) {
+        string zoneRep = i->getContent()->getZoneRepresentation();
         vector<string> parts;
         stringtok(parts, zoneRep);
         cout << "\t" << parts[0] << " "
              << parts[1] << " " << parts[2] << " ...\n";
         continue;
       }
-      if (i->first.d_type == QType::SOA && hidesoadetails) {
-        string zoneRep = i->first.getContent()->getZoneRepresentation();
+      if (i->d_type == QType::SOA && hidesoadetails) {
+        string zoneRep = i->getContent()->getZoneRepresentation();
         vector<string> parts;
         stringtok(parts, zoneRep);
         cout << "\t" << parts[0] << " "
@@ -168,7 +159,7 @@ static void printReply(const string& reply, bool showflags, bool hidesoadetails,
         continue;
       }
     }
-    cout << "\t" << i->first.getContent()->getZoneRepresentation() << "\n";
+    cout << "\t" << i->getContent()->getZoneRepresentation() << "\n";
   }
 
   EDNSOpts edo;
@@ -178,10 +169,10 @@ static void printReply(const string& reply, bool showflags, bool hidesoadetails,
          iter != edo.d_options.end(); ++iter) {
       if (iter->first == EDNSOptionCode::ECS) { // 'EDNS subnet'
         EDNSSubnetOpts reso;
-        if (getEDNSSubnetOptsFromString(iter->second, &reso)) {
-          cerr << "EDNS Subnet response: " << reso.source.toString()
-               << ", scope: " << reso.scope.toString()
-               << ", family = " << reso.scope.getNetwork().sin4.sin_family
+        if (EDNSSubnetOpts::getFromString(iter->second, &reso)) {
+          cerr << "EDNS Subnet response: " << reso.getSource().toString()
+               << ", scope: " << reso.getScope().toString()
+               << ", family = " << std::to_string(reso.getFamily())
                << endl;
         }
       } else if (iter->first == EDNSOptionCode::PADDING) {
@@ -212,9 +203,7 @@ try {
   bool fastOpen = false;
   bool insecureDoT = false;
   bool fromstdin = false;
-  boost::optional<Netmask> ednsnm;
-  uint16_t xpfcode = 0, xpfversion = 0, xpfproto = 0;
-  char *xpfsrc = NULL, *xpfdst = NULL;
+  std::optional<Netmask> ednsnm;
   QClass qclass = QClass::IN;
   uint8_t opcode = 0;
   string proxyheader;
@@ -268,17 +257,6 @@ try {
           exit(EXIT_FAILURE);
         }
         ednsnm = Netmask(argv[++i]);
-      }
-      else if (strcmp(argv[i], "xpf") == 0) {
-        if (argc < i + 6) {
-          cerr << "xpf needs five arguments" << endl;
-          exit(EXIT_FAILURE);
-        }
-        xpfcode = atoi(argv[++i]);
-        xpfversion = atoi(argv[++i]);
-        xpfproto = atoi(argv[++i]);
-        xpfsrc = argv[++i];
-        xpfdst = argv[++i];
       }
       else if (strcmp(argv[i], "class") == 0) {
         if (argc < i+2) {
@@ -378,8 +356,7 @@ try {
 #ifdef HAVE_LIBCURL
     vector<uint8_t> packet;
     s_expectedIDs.insert(0);
-    fillPacket(packet, name, type, dnssec, ednsnm, recurse, xpfcode, xpfversion,
-               xpfproto, xpfsrc, xpfdst, qclass, opcode, 0);
+    fillPacket(packet, name, type, dnssec, ednsnm, recurse, qclass, opcode, 0);
     MiniCurl mc;
     MiniCurl::MiniCurlHeaders mch;
     mch.emplace("Content-Type", "application/dns-message");
@@ -409,7 +386,7 @@ try {
       reply = reply.substr(2);
     }
 
-    printReply(reply, showflags, hidesoadetails, dumpluaraw);
+    printReply(reply, showflags, hidesoadetails, dumpluaraw, true);
   } else if (tcp) {
     std::shared_ptr<TLSCtx> tlsCtx{nullptr};
     if (dot) {
@@ -423,7 +400,7 @@ try {
     Socket sock(dest.sin4.sin_family, SOCK_STREAM);
     sock.setNonBlocking();
     setTCPNoDelay(sock.getHandle()); // disable NAGLE, which does not play nicely with delayed ACKs
-    TCPIOHandler handler(subjectName, false, sock.releaseHandle(), timeout, tlsCtx);
+    TCPIOHandler handler(subjectName, false, sock.releaseHandle(), timeout, std::move(tlsCtx));
     handler.connect(fastOpen, dest, timeout);
     // we are writing the proxyheader inside the TLS connection. Is that right?
     if (proxyheader.size() > 0 && handler.write(proxyheader.data(), proxyheader.size(), timeout) != proxyheader.size()) {
@@ -433,8 +410,7 @@ try {
     for (const auto& it : questions) {
       vector<uint8_t> packet;
       s_expectedIDs.insert(counter);
-      fillPacket(packet, it.first, it.second, dnssec, ednsnm, recurse, xpfcode,
-                 xpfversion, xpfproto, xpfsrc, xpfdst, qclass, opcode, counter);
+      fillPacket(packet, it.first, it.second, dnssec, ednsnm, recurse, qclass, opcode, counter);
       counter++;
 
       // Prefer to do a single write, so that fastopen can send all the data on SYN
@@ -464,8 +440,7 @@ try {
   {
     vector<uint8_t> packet;
     s_expectedIDs.insert(0);
-    fillPacket(packet, name, type, dnssec, ednsnm, recurse, xpfcode, xpfversion,
-               xpfproto, xpfsrc, xpfdst, qclass, opcode, 0);
+    fillPacket(packet, name, type, dnssec, ednsnm, recurse, qclass, opcode, 0);
     string question(packet.begin(), packet.end());
     Socket sock(dest.sin4.sin_family, SOCK_DGRAM);
     question = proxyheader + question;

@@ -48,7 +48,7 @@ void computeRRSIG(const DNSSECPrivateKey& dpk, const DNSName& signer, const DNSN
 
 typedef std::unordered_map<DNSName, std::pair<DNSSECPrivateKey, DSRecordContent>> testkeysset_t;
 
-bool addRRSIG(const testkeysset_t& keys, std::vector<DNSRecord>& records, const DNSName& signer, uint32_t sigValidity, bool broken = false, boost::optional<uint8_t> algo = boost::none, boost::optional<DNSName> wildcard = boost::none, boost::optional<time_t> now = boost::none);
+bool addRRSIG(const testkeysset_t& keys, std::vector<DNSRecord>& records, const DNSName& signer, uint32_t sigValidity, std::variant<bool, int> broken = false, boost::optional<uint8_t> algo = boost::none, boost::optional<DNSName> wildcard = boost::none, boost::optional<time_t> now = boost::none);
 
 void addDNSKEY(const testkeysset_t& keys, const DNSName& signer, uint32_t ttl, std::vector<DNSRecord>& records);
 
@@ -69,7 +69,7 @@ void addNSEC3NarrowRecordToLW(const DNSName& domain, const DNSName& zone, const 
 
 void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest, testkeysset_t& keys);
 
-void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest, testkeysset_t& keys, map<DNSName, dsmap_t>& dsAnchors);
+void generateKeyMaterial(const DNSName& name, unsigned int algo, uint8_t digest, testkeysset_t& keys, map<DNSName, dsset_t>& dsAnchors);
 
 LWResult::Result genericDSAndDNSKEYHandler(LWResult* res, const DNSName& domain, DNSName auth, int type, const testkeysset_t& keys, bool proveCut = true, boost::optional<time_t> now = boost::none, bool nsec3 = false, bool optOut = false);
 

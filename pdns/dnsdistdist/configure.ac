@@ -13,11 +13,20 @@ AC_DEFINE([DNSDIST], [1],
   [This is dnsdist]
 )
 
+# Warn when pkg.m4 is missing
+m4_pattern_forbid([^_?PKG_[A-Z_]+$], [*** pkg.m4 missing, please install pkg-config])
+
 LT_PREREQ([2.2.2])
 LT_INIT([disable-static])
 
 CFLAGS="-g -O3 -Wall -Wextra -Wshadow -Wno-unused-parameter -fvisibility=hidden $CFLAGS"
 CXXFLAGS="-g -O3 -Wall -Wextra -Wshadow -Wno-unused-parameter -Wmissing-declarations -Wredundant-decls -fvisibility=hidden $CXXFLAGS"
+
+AC_SUBST([pdns_configure_args], ["$ac_configure_args"])
+AC_DEFINE_UNQUOTED([DNSDIST_CONFIG_ARGS],
+  ["$pdns_configure_args"],
+  [pdns configure arguments]
+)
 
 PDNS_WITH_LIBSODIUM
 PDNS_WITH_QUICHE
@@ -33,13 +42,14 @@ PDNS_CHECK_PTHREAD_NP
 PDNS_CHECK_SECURE_MEMSET
 AC_FUNC_STRERROR_R
 
-BOOST_REQUIRE([1.42])
+BOOST_REQUIRE([1.54])
 
 PDNS_ENABLE_UNIT_TESTS
 PDNS_ENABLE_FUZZ_TARGETS
 PDNS_WITH_RE2
 DNSDIST_ENABLE_DNSCRYPT
 PDNS_WITH_EBPF
+PDNS_WITH_XSK
 PDNS_WITH_NET_SNMP
 PDNS_WITH_LIBCAP
 
@@ -82,10 +92,13 @@ DNSDIST_ENABLE_TLS_PROVIDERS
 PDNS_ENABLE_DNS_OVER_TLS
 DNSDIST_ENABLE_DNS_OVER_HTTPS
 DNSDIST_ENABLE_DNS_OVER_QUIC
+DNSDIST_ENABLE_DNS_OVER_HTTP3
 
-AS_IF([test "x$enable_dns_over_tls" != "xno" -o "x$enable_dns_over_https" != "xno"], [
+AS_IF([test "x$enable_dns_over_tls" != "xno" -o "x$enable_dns_over_https" != "xno" -o "x$enable_dns_over_quic" != "xno" ], [
   PDNS_WITH_LIBSSL
-  PDNS_WITH_GNUTLS
+  AS_IF([test "x$enable_dns_over_tls" != "xno" -o "x$enable_dns_over_https" != "xno"], [
+    PDNS_WITH_GNUTLS
+  ])
 ])
 
 AS_IF([test "x$enable_dns_over_tls" != "xno"], [
@@ -111,9 +124,23 @@ AS_IF([test "x$enable_dns_over_quic" != "xno"], [
   AS_IF([test "x$HAVE_QUICHE" != "x1"], [
     AC_MSG_ERROR([DNS over QUIC support requested but quiche was not found])
   ])
+  AS_IF([test "x$HAVE_LIBSSL" != "x1"], [
+    AC_MSG_ERROR([DNS over QUIC support requested but OpenSSL is not available])
+  ])
 ])
 
-PDNS_WITH_NGHTTP2
+AS_IF([test "x$enable_dns_over_http3" != "xno"], [
+  AS_IF([test "x$HAVE_QUICHE" != "x1"], [
+    AC_MSG_ERROR([DNS over HTTP/3 support requested but quiche was not found])
+  ])
+])
+
+DNSDIST_ENABLE_YAML
+
+AS_IF([test "x$enable_yaml" != "xno"], [
+  PDNS_CHECK_CARGO([1.64])
+])
+
 DNSDIST_WITH_CDB
 PDNS_CHECK_LMDB
 PDNS_ENABLE_IPCIPHER
@@ -172,6 +199,8 @@ AS_IF([test "x$PACKAGEVERSION" != "x"],
 )
 
 AC_CONFIG_FILES([Makefile
+        dnsdist-rust-lib/Makefile
+        dnsdist-rust-lib/rust/Makefile
         ext/arc4random/Makefile
         ext/yahttp/Makefile
         ext/yahttp/yahttp/Makefile
@@ -206,6 +235,10 @@ AC_MSG_NOTICE([Protobuf: yes])
 AS_IF([test "x$systemd" != "xn"],
   [AC_MSG_NOTICE([systemd: yes])],
   [AC_MSG_NOTICE([systemd: no])]
+)
+AS_IF([test x"$BPF_LIBS" != "x" -a x"$XDP_LIBS" != "x"],
+  [AC_MSG_NOTICE([AF_XDP/XSK: yes])],
+  [AC_MSG_NOTICE([AF_XDP/XSK: no])]
 )
 AS_IF([test "x$HAVE_IPCIPHER" = "x1"],
   [AC_MSG_NOTICE([ipcipher: yes])],
@@ -251,6 +284,10 @@ AS_IF([test "x$enable_dns_over_quic" != "xno"],
   [AC_MSG_NOTICE([DNS over QUIC (DoQ): yes])],
   [AC_MSG_NOTICE([DNS over QUIC (DoQ): no])]
 )
+AS_IF([test "x$enable_dns_over_http3" != "xno"],
+  [AC_MSG_NOTICE([DNS over HTTP/3 (DoH3): yes])],
+  [AC_MSG_NOTICE([DNS over HTTP/3 (DoH3): no])]
+)
 AS_IF([test "x$enable_dns_over_tls" != "xno"], [
   AS_IF([test "x$GNUTLS_LIBS" != "x"],
     [AC_MSG_NOTICE([GnuTLS: yes])],
@@ -278,6 +315,10 @@ AS_IF([test "x$CDB_LIBS" != "x"],
 AS_IF([test "x$LMDB_LIBS" != "x"],
   [AC_MSG_NOTICE([lmdb: yes])],
   [AC_MSG_NOTICE([lmdb: no])]
+)
+AS_IF([test "x$enable_yaml" != "xno"],
+  [AC_MSG_NOTICE([YAML configuration: yes])],
+  [AC_MSG_NOTICE([YAML configuration: no])]
 )
 
 AC_MSG_NOTICE([])

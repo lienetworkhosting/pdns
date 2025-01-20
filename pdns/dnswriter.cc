@@ -217,11 +217,8 @@ template <typename Container> uint16_t GenericDNSPacketWriter<Container>::lookup
   */
   unsigned int bestpos=0;
   *matchLen=0;
-#if BOOST_VERSION >= 105400
-  boost::container::static_vector<uint16_t, 34> nvect, pvect;
-#else
-  vector<uint16_t> nvect, pvect;
-#endif
+  boost::container::static_vector<uint16_t, 34> nvect;
+  boost::container::static_vector<uint16_t, 34> pvect;
 
   try {
     for(auto riter= raw.cbegin(); riter < raw.cend(); ) {
@@ -458,6 +455,12 @@ template <typename Container> void GenericDNSPacketWriter<Container>::xfrSvcPara
 template <typename Container> void GenericDNSPacketWriter<Container>::getRecordPayload(string& records)
 {
   records.assign(d_content.begin() + d_sor, d_content.end());
+}
+
+// call __before commit__
+template <typename Container> void GenericDNSPacketWriter<Container>::getWireFormatContent(string& record)
+{
+  record.assign(d_content.begin() + d_rollbackmarker, d_content.end());
 }
 
 template <typename Container> uint32_t GenericDNSPacketWriter<Container>::size() const

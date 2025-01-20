@@ -34,10 +34,7 @@
 #include <string_view>
 
 #include <boost/version.hpp>
-
-#if BOOST_VERSION >= 105300
 #include <boost/container/string.hpp>
-#endif
 
 inline bool dns_isspace(char c)
 {
@@ -57,6 +54,7 @@ inline unsigned char dns_tolower(unsigned char c)
 }
 
 #include "burtle.hh"
+#include "views.hh"
 
 // #include "dns.hh"
 // #include "logger.hh"
@@ -80,7 +78,7 @@ class DNSName
 public:
   static const size_t s_maxDNSNameLength = 255;
 
-  DNSName()  {}          //!< Constructs an *empty* DNSName, NOT the root!
+  DNSName() = default; //!< Constructs an *empty* DNSName, NOT the root!
   // Work around assertion in some boost versions that do not like self-assignment of boost::container::string
   DNSName& operator=(const DNSName& rhs)
   {
@@ -89,7 +87,7 @@ public:
     }
     return *this;
   }
-  DNSName& operator=(DNSName&& rhs)
+  DNSName& operator=(DNSName&& rhs) noexcept
   {
     if (this != &rhs) {
       d_storage = std::move(rhs.d_storage);
@@ -100,7 +98,7 @@ public:
   DNSName(DNSName&& a) = default;
 
   explicit DNSName(std::string_view sw); //!< Constructs from a human formatted, escaped presentation
-  DNSName(const char* p, int len, int offset, bool uncompress, uint16_t* qtype=nullptr, uint16_t* qclass=nullptr, unsigned int* consumed=nullptr, uint16_t minOffset=0); //!< Construct from a DNS Packet, taking the first question if offset=12. If supplied, consumed is set to the number of bytes consumed from the packet, which will not be equal to the wire length of the resulting name in case of compression.
+  DNSName(const char* p, size_t len, size_t offset, bool uncompress, uint16_t* qtype = nullptr, uint16_t* qclass = nullptr, unsigned int* consumed = nullptr, uint16_t minOffset = 0); //!< Construct from a DNS Packet, taking the first question if offset=12. If supplied, consumed is set to the number of bytes consumed from the packet, which will not be equal to the wire length of the resulting name in case of compression.
 
   bool isPartOf(const DNSName& rhs) const;   //!< Are we part of the rhs name? Note that name.isPartOf(name).
   inline bool operator==(const DNSName& rhs) const; //!< DNS-native comparison (case insensitive) - empty compares to empty
@@ -175,13 +173,17 @@ public:
   inline bool canonCompare(const DNSName& rhs) const;
   bool slowCanonCompare(const DNSName& rhs) const;
 
-#if BOOST_VERSION >= 105300
   typedef boost::container::string string_t;
-#else
-  typedef std::string string_t;
-#endif
+
   const string_t& getStorage() const {
     return d_storage;
+  }
+
+  [[nodiscard]] size_t sizeEstimate() const
+  {
+    return d_storage.size(); // knowingly overestimating small strings as most string
+                             // implementations have internal capacity and we always include
+                             // sizeof(*this)
   }
 
   bool has8bitBytes() const; /* returns true if at least one byte of the labels forming the name is not included in [A-Za-z0-9_*./@ \\:-] */
@@ -216,7 +218,8 @@ public:
 private:
   string_t d_storage;
 
-  void packetParser(const char* p, int len, int offset, bool uncompress, uint16_t* qtype, uint16_t* qclass, unsigned int* consumed, int depth, uint16_t minOffset);
+  void packetParser(const char* qpos, size_t len, size_t offset, bool uncompress, uint16_t* qtype, uint16_t* qclass, unsigned int* consumed, int depth, uint16_t minOffset);
+  size_t parsePacketUncompressed(const pdns::views::UnsignedCharView& view, size_t position, bool uncompress);
   static void appendEscapedLabel(std::string& appendTo, const char* orig, size_t len);
   static std::string unescapeLabel(const std::string& orig);
   static void throwSafeRangeError(const std::string& msg, const char* buf, size_t length);
@@ -561,8 +564,7 @@ private:
 struct SuffixMatchNode
 {
   public:
-    SuffixMatchNode()
-    {}
+    SuffixMatchNode() = default;
     SuffixMatchTree<bool> d_tree;
 
     void add(const DNSName& dnsname)

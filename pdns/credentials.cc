@@ -56,10 +56,6 @@ static std::string const pwhash_prefix = "$scrypt$";
 static size_t const pwhash_prefix_size = pwhash_prefix.size();
 #endif
 
-uint64_t const CredentialsHolder::s_defaultWorkFactor{1024U}; /* N */
-uint64_t const CredentialsHolder::s_defaultParallelFactor{1U}; /* p */
-uint64_t const CredentialsHolder::s_defaultBlockSize{8U}; /* r */
-
 SensitiveData::SensitiveData(std::string&& data) :
   d_data(std::move(data))
 {
@@ -69,7 +65,7 @@ SensitiveData::SensitiveData(std::string&& data) :
 #endif
 }
 
-SensitiveData& SensitiveData::operator=(SensitiveData&& rhs)
+SensitiveData& SensitiveData::operator=(SensitiveData&& rhs) noexcept
 {
   d_data = std::move(rhs.d_data);
   rhs.clear();

@@ -1,0 +1,410 @@
+Changelogs for 5.1.X
+====================
+
+Before upgrading, it is advised to read the :doc:`../upgrade`.
+
+.. changelog::
+  :version: 5.1.3
+  :released: 5th of November 2024
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14774
+    :tickets: 14693
+
+    Implement rfc6303 special zones (mostly v6 reverse mappings).
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14773
+    :tickets: 14628
+
+    Avoid duplicated waiter ids for chained requests.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14772
+    :tickets: 14554
+
+    Distinguish OS imposed limits from app imposed limits, specifically on chains.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14771
+    :tickets: 14549, 14550
+
+    json11: add include for cstdint.
+
+.. changelog::
+  :version: 5.1.2
+  :released: 3rd of October 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14743
+
+    `Security advisory 2024-04 <https://docs.powerdns.com/recursor/security-advisories/powerdns-advisory-2024-04.html>`__: CVE-2024-25590
+
+.. changelog::
+   :version: 5.1.1
+   :released: 23rd of July 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14516
+    :tickets: 14514
+
+    Fix maintenanceCalls vs maintenanceCount in SNMP MIB.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14501
+    :tickets: 14499
+
+    Limit the number of async tasks pushed to resolve NS names and optimizer processing of additionals.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14481
+    :tickets: 14471
+
+    Dump right SOA into dumpFile and report non-relative SOA for includeSOA=true.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14478
+    :tickets: 14404
+
+    Yahttp router: avoid unsigned underflow in match().
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14477
+    :tickets: 14459
+
+    Move default Docker config to YAML.
+
+.. changelog::
+  :version: 5.1.0
+  :released: 10th of July 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14435
+
+    Fix typo in log message.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14402
+    :tickets: 14400
+
+    Switch el7 builds to Oracle Linux 7
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14389
+    :tickets: 14384
+
+    Keep Lua config in Debian/Ubuntu package as existing setups might use it, even though a fresh one does not.
+
+.. changelog::
+  :version: 5.1.0-rc1
+  :released: 25th of June 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14373
+    :tickets: 14362
+
+    Don't send double SOA record in the case of a dns64 CNAME that does not resolve.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14265,14374
+    :tickets: 13935
+
+    Allow recursor.conf file to contain YAML to ease transition to YAML config.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14318
+
+    Add nsName into outgoing protobuf request/response messages.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14359
+    :tickets: 14356
+
+    dns.cc: use pdns::views::UnsignedCharView.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14346
+    :tickets: 13021
+
+    Fix TCP case for policy tags set by gettag(_ffi).
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14340
+
+    Fix client remotes count when using proxy protocol.
+
+  .. change::
+    :tags:  Improvements
+    :pullreq: 14312
+
+    Do not add UDR field to outgoingProtobuf answer messages
+
+  .. change::
+    :tags:  Improvements
+    :pullreq: 14275
+
+    Add options for ignoring domains for UDR purposes (Ensar Sarajčić).
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14309
+
+    Make max CNAME chain length handled settable, previously fixed at 10.
+
+.. changelog::
+  :version: 5.1.0-beta1
+  :released: 6th of June 2024
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14257
+    :tickets: 13020
+
+    Add a few more fields to the protobuf messages.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14221,14258
+
+    Handle authoritative servers slow to respond when load is high better.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14206
+
+    Be a bit more strict with respect to positive answers expanded from a wildcard.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14111
+
+    Extra export types for protobuf messages.
+
+ .. change::
+    :tags: Improvements
+    :pullreq: 14268,14259,14260,14262
+
+    Various code cleanups and Coverity prompted fixes.
+
+.. changelog::
+  :version: 5.1.0-alpha1
+  :released: 15th of May 2024
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13819
+
+    Add possibility to set existing Lua config in YAML settings.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14097,14139
+
+    Tidy iputils.hh and iputils.cc
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14023
+    :tickets: 13730
+
+    Add interface (not subject to proxy protocol substitutions) addresses in Lua DNSQuestion and corresponding FFI.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13596
+
+    Configure.ac fixup: do not require bash (Eli Schwartz)
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14018
+    :tickets: 13948
+
+    Add setting to exclude specific listen socket addresses from requiring proxy protocol.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14006
+
+    FDWrapper: Do not try to close negative file descriptors.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13969
+    :tickets: 13677
+
+    Use shared NOD (and/or UDR) DB, to avoid multiple copies in memory and on disk.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13985
+
+    Fixup res-system-resolve.cc on FreeBSD: resolve.h needs netinet/in.h.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13921
+    :tickets: 11393
+
+    Add feature to allow names (resolved by system resolver) in forwarding config.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 10933
+
+    Enable 64-bit time_t on 32-bit systems with glibc-2.34 (Sven Wegener).
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13844
+
+    Remove the possibility to disable structured logging.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13842
+
+    Add structured logging backend that uses JSON representation.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13919
+
+    Don't throttle lame servers if they are marked as dontThrottle.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13894
+
+    Fix Coverity 1534473 Unintended sign extension.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13889
+
+    Tidy recursor-lua4.cc and recursor-lua4.hh.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13866
+
+    Don't enter wildcard qnames into the cache in the ZoneToCache function.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13864
+
+    Support v6 in FrameStreamLogger, including tidy.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13861
+
+    Tidy rpzloader.cc and .hh.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13824
+
+    Log if a dnssec related limit was hit (if log_bogus is set).
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13746
+
+    Tidy ResolveContext class.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13741
+
+    Fix Coverity issues in new RPZ code.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13744
+
+    Tidy filterpo.?? (reaching into iputils.hh as well).
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13504
+    :tickets: 13265
+
+    Introduce command to set aggressive NSEC cache size.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13701
+    :tickets: 12777
+
+    RPZ from primary refactor and allow notifies for RPZs
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13702
+
+    Use ref wrapper instead of raw pointer in variant.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13706, 13719
+
+    Fix a few coverity reports.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13711
+
+    Cleanup of code doing SNMP OID handling.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13654
+
+    Allow out-of-tree builds (Chris Hofstaedtler)
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13714
+
+    Fix country()/countryCode() mixup in example Lua Record documentation (Edward Dore)
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13680
+
+    Fix a potential null deref in `MTasker::schedule()`.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13652
+
+    MTasker cleanup and move to recursordist.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13566
+    :tickets: 8646
+
+    Lower default max-qperq limit.
+

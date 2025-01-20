@@ -22,7 +22,7 @@
 #pragma once
 
 #include "config.h"
-#ifdef HAVE_NGHTTP2
+#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
 #include <nghttp2/nghttp2.h>
 
 #include "dnsdist-tcp-upstream.hh"
@@ -87,6 +87,7 @@ private:
 
   void stopIO();
   uint32_t getConcurrentStreamsCount() const;
+  void updateIO(IOState newState, const timeval& now) override;
   void updateIO(IOState newState, const FDMultiplexer::callbackfunc_t& callback);
   void handleIOError();
   bool sendResponse(StreamID streamID, PendingQuery& context, uint16_t responseCode, const HeadersMap& customResponseHeaders, const std::string& contentType = "", bool addContentType = true);
@@ -116,6 +117,10 @@ private:
   /* Whether we have data that we want to write to the socket,
      but the socket is full. */
   bool d_pendingWrite{false};
+  /* Whether we are currently inside the readHTTPData function,
+     which is not reentrant and could be called from itself via
+     the nghttp2 callbacks */
+  bool d_inReadFunction{false};
 };
 
 class NGHTTP2Headers
@@ -156,4 +161,4 @@ public:
   static void addCustomDynamicHeader(std::vector<nghttp2_nv>& headers, const std::string& name, const std::string_view& value);
 };
 
-#endif /* HAVE_NGHTTP2 */
+#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */

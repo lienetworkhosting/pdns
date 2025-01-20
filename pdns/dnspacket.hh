@@ -44,9 +44,6 @@
 #include "pdnsexception.hh"
 #include "dnsrecords.hh"
 
-class UeberBackend;
-class DNSSECKeeper;
-
 
 //! This class represents DNS packets, either received or to be sent.
 class DNSPacket
@@ -65,6 +62,7 @@ public:
   ComboAddress getRemote() const;
   ComboAddress getInnerRemote() const; // for proxy protocol
   Netmask getRealRemote() const;
+  void setRealRemote(const Netmask& netmask);
   ComboAddress getLocal() const
   {
     ComboAddress ca;
@@ -97,7 +95,7 @@ public:
 
   void clearRecords(); //!< when building a packet, wipe all previously added records (clears 'rrs')
 
-  /** Add a DNSZoneRecord to this packet. A DNSPacket (as does a DNS Packet) has 4 kinds of resource records. Questions, 
+  /** Add a DNSZoneRecord to this packet. A DNSPacket (as does a DNS Packet) has 4 kinds of resource records. Questions,
       Answers, Authority and Additional. See RFC 1034 and 1035 for details. You can specify where a record needs to go in the
       DNSZoneRecord d_place field */
   void addRecord(DNSZoneRecord&&);  // adds to 'rrs'
@@ -157,21 +155,23 @@ public:
   uint16_t qclass{QClass::IN};  //!< class of the question - should always be INternet 2
   QType qtype;  //!< type of the question 2
 
-  bool d_tcp{false};
+  bool d_tcp{false}; // whether DNS packet is using TCP (false when UDP)
+  bool d_xfr{false}; // whether DNS packet is a zone transfer, either AXFR or IXFR
   bool d_dnssecOk{false};
   bool d_havetsig{false};
 
   bool getTSIGDetails(TSIGRecordContent* tr, DNSName* keyname, uint16_t* tsigPos=nullptr) const;
   void setTSIGDetails(const TSIGRecordContent& tr, const DNSName& keyname, const string& secret, const string& previous, bool timersonly=false);
+  bool validateTSIG(const TSIGTriplet& tsigTriplet, const TSIGRecordContent& tsigContent, const std::string& previousMAC, const std::string& theirMAC, bool timersOnly) const;
   bool getTKEYRecord(TKEYRecordContent* tr, DNSName* keyname) const;
 
   vector<DNSZoneRecord>& getRRS() { return d_rrs; }
-  bool checkForCorrectTSIG(UeberBackend* B, DNSName* keyname, string* secret, TSIGRecordContent* trc) const;
 
-  static uint16_t s_udpTruncationThreshold; 
+  static uint16_t s_udpTruncationThreshold;
   static bool s_doEDNSSubnetProcessing;
   static bool s_doEDNSCookieProcessing;
   static string s_EDNSCookieKey;
+  EDNSSubnetOpts d_eso;
 
 #ifdef ENABLE_GSS_TSIG
   void cleanupGSS(int rcode);
@@ -187,7 +187,6 @@ private:
   vector<DNSZoneRecord> d_rrs; // 8
   std::unordered_set<size_t> d_dedup;
   string d_rawpacket; // this is where everything lives 8
-  EDNSSubnetOpts d_eso;
   EDNSCookiesOpt d_eco;
 
   int d_maxreplylen{0};

@@ -2,6 +2,7 @@ import dns
 import dns.serial
 import time
 import itertools
+import socket
 
 from ixfrdisttests import IXFRDistTest
 from xfrserver.xfrserver import AXFRServer
@@ -26,7 +27,7 @@ newrecord.example.        8484    A       192.0.2.42
 """,
     3: """
 $ORIGIN example.
-@        86400   SOA    foo bar 3 2 3 4 5
+@        86400   SOA    foo bar 3 1500 3 4 5
 @        4242    NS     ns1.example.
 @        4242    NS     ns2.example.
 ns1.example.    4242    A       192.0.2.1
@@ -56,10 +57,15 @@ class IXFRDistBasicTest(IXFRDistTest):
 
     global xfrServerPort
     _xfrDone = 0
-    _config_domains = { 'example': '127.0.0.1:' + str(xfrServerPort),   # zone for actual XFR testing
-                        'example2': '127.0.0.1:1',                      # bogus port is intentional - zone is intentionally unloadable
-                        # example3                                      # intentionally absent for 'unconfigured zone' testing
-                        'example4': '127.0.0.1:' + str(xfrServerPort) } # for testing how ixfrdist deals with getting the wrong zone on XFR
+    _config_domains = [
+        # zone for actual XFR testing
+        {"domain" : "example", "master" : "127.0.0.1:" + str(xfrServerPort), 'notify' : "127.0.0.1:" + str(xfrServerPort + 1)},
+        # bogus port is intentional - zone is intentionally unloadable
+        {"domain" : "example2", "master" : "127.0.0.1:1"},
+        # for testing how ixfrdist deals with getting the wrong zone on XFR
+        {"domain" : "example4", "master" : '127.0.0.1:' + str(xfrServerPort)},
+
+    ]
     _loaded_serials = []
 
     @classmethod
@@ -72,10 +78,16 @@ class IXFRDistBasicTest(IXFRDistTest):
     def tearDownClass(cls):
         cls.tearDownIXFRDist()
 
-    def waitUntilCorrectSerialIsLoaded(self, serial, timeout=10):
+    def waitUntilCorrectSerialIsLoaded(self, serial, timeout=10, notify=False):
         global xfrServer
 
         xfrServer.moveToSerial(serial)
+
+        if notify:
+            notif = dns.message.make_query('example.', 'SOA')
+            notif.set_opcode(dns.opcode.NOTIFY)
+            notify_response = self.sendUDPQuery(notif)
+            assert notify_response.rcode() == dns.rcode.NOERROR
 
         def get_current_serial():
             query = dns.message.make_query('example.', 'SOA')
@@ -106,7 +118,7 @@ class IXFRDistBasicTest(IXFRDistTest):
 
     def checkFullZone(self, serial):
         global zones
-        
+
         # FIXME: 90% duplication from _getRecordsForSerial
         zone = []
         for i in dns.zone.from_text(zones[serial], relativize=False).iterate_rdatasets():
@@ -227,7 +239,25 @@ class IXFRDistBasicTest(IXFRDistTest):
         self.checkIXFR(2,3)
         self.checkIXFR(1,3)
 
-        self.waitUntilCorrectSerialIsLoaded(4)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", xfrServerPort + 1))
+        sock.settimeout(2)
+
+        self.waitUntilCorrectSerialIsLoaded(serial=4, timeout=10, notify=True)
+
+        # recv the forwarded NOTIFY
+        data, addr = sock.recvfrom(4096)
+        received = dns.message.from_wire(data)
+        sock.close()
+
+        notif = dns.message.make_query('example.', 'SOA')
+        notif.set_opcode(dns.opcode.NOTIFY)
+        notif.flags |= dns.flags.AA
+        notif.flags &= ~dns.flags.RD
+        notif.id = received.id
+
+        self.assertEqual(received, notif)
+
         self.checkFullZone(4)
         self.checkIXFR(3,4)
         self.checkIXFR(2,4)

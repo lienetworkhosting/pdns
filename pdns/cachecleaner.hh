@@ -81,13 +81,14 @@ void pruneCollection(T& collection, size_t maxCached, size_t scanFraction = 1000
 template <typename S, typename T>
 void moveCacheItemToFrontOrBack(T& collection, typename T::iterator& iter, bool front)
 {
-  typedef typename T::template index<S>::type sequence_t;
-  sequence_t& sidx = collection.template get<S>();
-  typename sequence_t::iterator si = collection.template project<S>(iter);
-  if (front)
-    sidx.relocate(sidx.begin(), si); // at the beginning of the delete queue
-  else
-    sidx.relocate(sidx.end(), si); // back
+  auto& sidx = collection.template get<S>();
+  auto siter = collection.template project<S>(iter);
+  if (front) {
+    sidx.relocate(sidx.begin(), siter); // at the beginning of the delete queue
+  }
+  else {
+    sidx.relocate(sidx.end(), siter); // back
+  }
 }
 
 template <typename S, typename T>
@@ -108,8 +109,8 @@ uint64_t pruneLockedCollectionsVector(std::vector<T>& maps)
   uint64_t totErased = 0;
   time_t now = time(nullptr);
 
-  for (auto& mc : maps) {
-    auto map = mc.d_map.write_lock();
+  for (auto& shard : maps) {
+    auto map = shard.d_map.write_lock();
 
     uint64_t lookAt = (map->size() + 9) / 10; // Look at 10% of this shard
     uint64_t erased = 0;
@@ -130,8 +131,8 @@ uint64_t pruneLockedCollectionsVector(std::vector<T>& maps)
   return totErased;
 }
 
-template <typename S, typename C, typename T>
-uint64_t pruneMutexCollectionsVector(time_t now, C& container, std::vector<T>& maps, uint64_t maxCached, uint64_t cacheSize)
+template <typename S, typename T>
+uint64_t pruneMutexCollectionsVector(time_t now, std::vector<T>& maps, uint64_t maxCached, uint64_t cacheSize)
 {
   uint64_t totErased = 0;
   uint64_t toTrim = 0;
@@ -163,7 +164,7 @@ uint64_t pruneMutexCollectionsVector(time_t now, C& container, std::vector<T>& m
     uint64_t lookedAt = 0;
     for (auto i = sidx.begin(); i != sidx.end(); lookedAt++) {
       if (i->isStale(now)) {
-        container.preRemoval(*shard, *i);
+        shard->preRemoval(*i);
         i = sidx.erase(i);
         erased++;
         content.decEntriesCount();
@@ -223,7 +224,7 @@ uint64_t pruneMutexCollectionsVector(time_t now, C& container, std::vector<T>& m
     auto& sidx = boost::multi_index::get<S>(shard->d_map);
     size_t removed = 0;
     for (auto i = sidx.begin(); i != sidx.end() && removed < toTrimForThisShard; removed++) {
-      container.preRemoval(*shard, *i);
+      shard->preRemoval(*i);
       i = sidx.erase(i);
       content.decEntriesCount();
       ++totErased;
@@ -240,8 +241,8 @@ uint64_t purgeLockedCollectionsVector(std::vector<T>& maps)
 {
   uint64_t delcount = 0;
 
-  for (auto& mc : maps) {
-    auto map = mc.d_map.write_lock();
+  for (auto& shard : maps) {
+    auto map = shard.d_map.write_lock();
     delcount += map->size();
     map->clear();
   }
@@ -256,8 +257,8 @@ uint64_t purgeLockedCollectionsVector(std::vector<T>& maps, const std::string& m
   std::string prefix(match);
   prefix.resize(prefix.size() - 1);
   DNSName dprefix(prefix);
-  for (auto& mc : maps) {
-    auto map = mc.d_map.write_lock();
+  for (auto& shard : maps) {
+    auto map = shard.d_map.write_lock();
     auto& idx = boost::multi_index::get<N>(*map);
     auto iter = idx.lower_bound(dprefix);
     auto start = iter;
@@ -275,10 +276,10 @@ uint64_t purgeLockedCollectionsVector(std::vector<T>& maps, const std::string& m
 }
 
 template <typename N, typename T>
-uint64_t purgeExactLockedCollection(T& mc, const DNSName& qname)
+uint64_t purgeExactLockedCollection(T& shard, const DNSName& qname)
 {
   uint64_t delcount = 0;
-  auto map = mc.d_map.write_lock();
+  auto map = shard.d_map.write_lock();
   auto& idx = boost::multi_index::get<N>(*map);
   auto range = idx.equal_range(qname);
   if (range.first != range.second) {
@@ -290,12 +291,12 @@ uint64_t purgeExactLockedCollection(T& mc, const DNSName& qname)
 }
 
 template <typename S, typename Index>
-bool lruReplacingInsert(Index& i, const typename Index::value_type& x)
+bool lruReplacingInsert(Index& index, const typename Index::value_type& value)
 {
-  auto inserted = i.insert(x);
+  auto inserted = index.insert(value);
   if (!inserted.second) {
-    moveCacheItemToBack<S>(i, inserted.first);
-    i.replace(inserted.first, x);
+    moveCacheItemToBack<S>(index, inserted.first);
+    index.replace(inserted.first, value);
     return false;
   }
   return true;

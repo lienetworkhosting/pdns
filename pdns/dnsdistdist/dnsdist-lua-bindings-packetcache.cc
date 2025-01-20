@@ -25,9 +25,8 @@
 
 #include "config.h"
 #include "dnsdist.hh"
+#include "dnsdist-cache.hh"
 #include "dnsdist-lua.hh"
-
-#include <boost/lexical_cast.hpp>
 
 void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
 {
@@ -41,6 +40,7 @@ void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
     size_t maxNegativeTTL = 3600;
     size_t staleTTL = 60;
     size_t numberOfShards = 20;
+    size_t maxEntrySize{0};
     bool dontAge = false;
     bool deferrableInsertLock = true;
     bool ecsParsing = false;
@@ -59,6 +59,7 @@ void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
     getOptionalValue<size_t>(vars, "staleTTL", staleTTL);
     getOptionalValue<size_t>(vars, "temporaryFailureTTL", tempFailTTL);
     getOptionalValue<bool>(vars, "cookieHashing", cookieHashing);
+    getOptionalValue<size_t>(vars, "maximumEntrySize", maxEntrySize);
 
     if (getOptionalValue<decltype(skipOptions)>(vars, "skipOptions", skipOptions) > 0) {
       for (const auto& option : skipOptions) {
@@ -87,6 +88,9 @@ void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
 
     res->setKeepStaleData(keepStaleData);
     res->setSkippedOptions(optionsToSkip);
+    if (maxEntrySize >= sizeof(dnsheader)) {
+      res->setMaximumEntrySize(maxEntrySize);
+    }
 
     return res;
   });
@@ -196,7 +200,7 @@ void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
       return results;
     });
 
-  luaCtx.registerFunction<void(std::shared_ptr<DNSDistPacketCache>::*)(const std::string& fname)const>("dump", [](const std::shared_ptr<DNSDistPacketCache>& cache, const std::string& fname) {
+  luaCtx.registerFunction<void(std::shared_ptr<DNSDistPacketCache>::*)(const std::string& fname, boost::optional<bool> rawResponse)const>("dump", [](const std::shared_ptr<DNSDistPacketCache>& cache, const std::string& fname, boost::optional<bool> rawResponse) {
       if (cache) {
 
         int fd = open(fname.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0660);
@@ -207,7 +211,7 @@ void setupLuaBindingsPacketCache(LuaContext& luaCtx, bool client)
 
         uint64_t records = 0;
         try {
-          records = cache->dump(fd);
+          records = cache->dump(fd, rawResponse? *rawResponse : false);
         }
         catch (const std::exception& e) {
           close(fd);

@@ -51,9 +51,12 @@ public:
   RemoteLoader();
 };
 
-DNSBackend* be;
+std::unique_ptr<DNSBackend> backendUnderTest;
 
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_MAIN
 #define BOOST_TEST_MODULE unit
 
@@ -66,16 +69,16 @@ struct RemotebackendSetup
 {
   RemotebackendSetup()
   {
-    be = nullptr;
+    backendUnderTest = nullptr;
     try {
       // setup minimum arguments
       ::arg().set("module-dir") = "./.libs";
-      new RemoteLoader();
+      auto loader = std::make_unique<RemoteLoader>();
       BackendMakers().launch("remote");
       // then get us a instance of it
       ::arg().set("remote-connection-string") = "http:url=http://localhost:62434/dns/endpoint.json,post=1,post_json=1";
       ::arg().set("remote-dnssec") = "yes";
-      be = BackendMakers().all()[0];
+      backendUnderTest = std::move(BackendMakers().all()[0]);
     }
     catch (PDNSException& ex) {
       BOOST_TEST_MESSAGE("Cannot start remotebackend: " << ex.reason);

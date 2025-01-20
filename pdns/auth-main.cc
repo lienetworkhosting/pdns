@@ -94,11 +94,12 @@ time_t g_starttime;
 string g_programname = "pdns"; // used in packethandler.cc
 
 const char* funnytext = "*****************************************************************************\n"
-                        "Ok, you just ran pdns_server through 'strings' hoping to find funny messages.\n"
-                        "Well, you found one. \n"
-                        "Two ions are flying through their particle accelerator, says the one to the\n"
-                        "other 'I think I've lost an electron!' \n"
-                        "So the other one says, 'Are you sure?'. 'YEAH! I'M POSITIVE!'\n"
+                        "Ok, you just ran pdns-auth through 'strings' hoping to find funny messages.  \n"
+                        "Well, you found one.                                                         \n"
+                        "Two ions are flying through their particle accelerator, says the one to the  \n"
+                        "other 'I think I've lost an electron!'                                       \n"
+                        "So the other one says, 'Are you sure?'. 'YEAH! I'M POSITIVE!'                \n"
+                        "                                                                             \n"
                         "                                            the pdns crew - pdns@powerdns.com\n"
                         "*****************************************************************************\n";
 
@@ -109,6 +110,8 @@ bool g_doLuaRecord;
 int g_luaRecordExecLimit;
 time_t g_luaHealthChecksInterval{5};
 time_t g_luaHealthChecksExpireDelay{3600};
+time_t g_luaConsistentHashesExpireDelay{86400};
+time_t g_luaConsistentHashesCleanupInterval{3600};
 #endif
 #ifdef ENABLE_GSS_TSIG
 bool g_doGssTSIG;
@@ -161,13 +164,13 @@ static void declareArguments()
   ::arg().setSwitch("dnsupdate", "Enable/Disable DNS update (RFC2136) support. Default is no.") = "no";
   ::arg().setSwitch("write-pid", "Write a PID file") = "yes";
   ::arg().set("allow-dnsupdate-from", "A global setting to allow DNS updates from these IP ranges.") = "127.0.0.0/8,::1";
+  ::arg().setSwitch("dnsupdate-require-tsig", "Require TSIG secured DNS updates. Default is no.") = "no";
   ::arg().set("proxy-protocol-from", "A Proxy Protocol header is only allowed from these subnets, and is mandatory then too.") = "";
   ::arg().set("proxy-protocol-maximum-size", "The maximum size of a proxy protocol payload, including the TLV values") = "512";
   ::arg().setSwitch("send-signed-notify", "Send TSIG secured NOTIFY if TSIG key is configured for a zone") = "yes";
   ::arg().set("allow-unsigned-notify", "Allow unsigned notifications for TSIG secured zones") = "yes"; // FIXME: change to 'no' later
-  ::arg().set("allow-unsigned-supermaster", "Allow supermasters to create zones without TSIG signed NOTIFY") = "yes";
   ::arg().set("allow-unsigned-autoprimary", "Allow autoprimaries to create zones without TSIG signed NOTIFY") = "yes";
-  ::arg().setSwitch("forward-dnsupdate", "A global setting to allow DNS update packages that are for a Slave zone, to be forwarded to the master.") = "yes";
+  ::arg().setSwitch("forward-dnsupdate", "A global setting to allow DNS update packages that are for a Secondary zone, to be forwarded to the primary.") = "yes";
   ::arg().setSwitch("log-dns-details", "If PDNS should log DNS non-erroneous details") = "no";
   ::arg().setSwitch("log-dns-queries", "If PDNS should log all incoming DNS queries") = "no";
   ::arg().set("local-address", "Local IP addresses to which we bind") = "0.0.0.0, ::";
@@ -178,7 +181,7 @@ static void declareArguments()
   ::arg().set("overload-queue-length", "Maximum queuelength moving to packetcache only") = "0";
   ::arg().set("max-queue-length", "Maximum queuelength before considering situation lost") = "5000";
 
-  ::arg().set("retrieval-threads", "Number of AXFR-retrieval threads for slave operation") = "2";
+  ::arg().set("retrieval-threads", "Number of AXFR-retrieval threads for secondary operation") = "2";
   ::arg().setSwitch("api", "Enable/disable the REST API (including HTTP listener)") = "no";
   ::arg().set("api-key", "Static pre-shared authentication key for access to the REST API") = "";
   ::arg().setSwitch("default-api-rectify", "Default API-RECTIFY value for zones") = "yes";
@@ -193,7 +196,8 @@ static void declareArguments()
   ::arg().set("version-string", "PowerDNS version in packets - full, anonymous, powerdns or custom") = "full";
   ::arg().set("control-console", "Debugging switch - don't use") = "no"; // but I know you will!
   ::arg().set("loglevel", "Amount of logging. Higher is more. Do not set below 3") = "4";
-  ::arg().set("disable-syslog", "Disable logging to syslog, useful when running inside a supervisor that logs stdout") = "no";
+  ::arg().setSwitch("loglevel-show", "Include log level indicator in log output") = "no";
+  ::arg().set("disable-syslog", "Disable logging to syslog, useful when running inside a supervisor that logs stderr") = "no";
   ::arg().set("log-timestamp", "Print timestamps in log lines") = "yes";
   ::arg().set("distributor-threads", "Default number of Distributor (backend) threads to start") = "3";
   ::arg().set("signing-threads", "Default number of signer threads to start") = "3";
@@ -201,6 +205,7 @@ static void declareArguments()
   ::arg().set("receiver-threads", "Default number of receiver threads to start") = "1";
   ::arg().set("queue-limit", "Maximum number of milliseconds to queue a query") = "1500";
   ::arg().set("resolver", "Use this resolver for ALIAS and the internal stub resolver") = "no";
+  ::arg().set("dnsproxy-udp-port-range", "Select DNS Proxy outgoing UDP port from given range (lower upper)") = "10000 60000";
   ::arg().set("udp-truncation-threshold", "Maximum UDP response size before we truncate") = "1232";
 
   ::arg().set("config-name", "Name of this virtual configuration - will rename the binary image") = "";
@@ -212,7 +217,6 @@ static void declareArguments()
   ::arg().set("only-notify", "Only send AXFR NOTIFY to these IP addresses or netmasks") = "0.0.0.0/0,::/0";
   ::arg().set("also-notify", "When notifying a zone, also notify these nameservers") = "";
   ::arg().set("allow-notify-from", "Allow AXFR NOTIFY from these IP ranges. If empty, drop all incoming notifies.") = "0.0.0.0/0,::/0";
-  ::arg().set("slave-cycle-interval", "Schedule slave freshness checks once every .. seconds") = "";
   ::arg().set("xfr-cycle-interval", "Schedule primary/secondary SOA freshness checks once every .. seconds") = "60";
   ::arg().set("secondary-check-signature-freshness", "Check signatures in SOA freshness check. Sets DO flag on SOA queries. Outside some very problematic scenarios, say yes here.") = "yes";
 
@@ -221,17 +225,15 @@ static void declareArguments()
   ::arg().set("tcp-control-secret", "If set, PowerDNS can be controlled over TCP after passing this secret") = "";
   ::arg().set("tcp-control-range", "If set, remote control of PowerDNS is possible over these networks only") = "127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, ::1/128, fe80::/10";
 
-  ::arg().setSwitch("slave", "Act as a secondary") = "no";
   ::arg().setSwitch("secondary", "Act as a secondary") = "no";
-  ::arg().setSwitch("master", "Act as a primary") = "no";
   ::arg().setSwitch("primary", "Act as a primary") = "no";
-  ::arg().setSwitch("superslave", "Act as a autosecondary") = "no";
-  ::arg().setSwitch("autosecondary", "Act as an autosecondary (formerly superslave)") = "no";
+  ::arg().setSwitch("autosecondary", "Act as an autosecondary") = "no";
   ::arg().setSwitch("disable-axfr-rectify", "Disable the rectify step during an outgoing AXFR. Only required for regression testing.") = "no";
   ::arg().setSwitch("guardian", "Run within a guardian process") = "no";
   ::arg().setSwitch("prevent-self-notification", "Don't send notifications to what we think is ourself") = "yes";
   ::arg().setSwitch("any-to-tcp", "Answer ANY queries with tc=1, shunting to TCP") = "yes";
   ::arg().setSwitch("edns-subnet-processing", "If we should act on EDNS Subnet options") = "no";
+  ::arg().set("delay-notifications", "Configure a delay to send out notifications, no delay by default") = "0";
 
   ::arg().set("edns-cookie-secret", "When set, set a server cookie when responding to a query with a Client cookie (in hex)") = "";
 
@@ -243,6 +245,7 @@ static void declareArguments()
   ::arg().set("webserver-allow-from", "Webserver/API access is only allowed from these subnets") = "127.0.0.1,::1";
   ::arg().set("webserver-loglevel", "Amount of logging in the webserver (none, normal, detailed)") = "normal";
   ::arg().set("webserver-max-bodysize", "Webserver/API maximum request/response body size in megabytes") = "2";
+  ::arg().set("webserver-connection-timeout", "Webserver/API request/response timeout in seconds") = "5";
   ::arg().setSwitch("webserver-hash-plaintext-credentials", "Whether to hash passwords and api keys supplied in plaintext, to prevent keeping the plaintext version in memory at runtime") = "no";
 
   ::arg().setSwitch("query-logging", "Hint backends that queries should be logged") = "no";
@@ -266,9 +269,8 @@ static void declareArguments()
   ::arg().set("zone-metadata-cache-ttl", "Seconds to cache zone metadata from the database") = "60";
 
   ::arg().set("trusted-notification-proxy", "IP address of incoming notification proxy") = "";
-  ::arg().set("slave-renotify", "If we should send out notifications for secondaried updates") = "no";
   ::arg().set("secondary-do-renotify", "If this secondary should send out notifications after receiving zone transfers from a primary") = "no";
-  ::arg().set("forward-notify", "IP addresses to forward received notifications to regardless of master or slave settings") = "";
+  ::arg().set("forward-notify", "IP addresses to forward received notifications to regardless of primary or secondary settings") = "";
 
   ::arg().set("default-ttl", "Seconds a result is valid if not set otherwise") = "3600";
   ::arg().set("max-tcp-connections", "Maximum number of TCP connections") = "20";
@@ -290,6 +292,7 @@ static void declareArguments()
 
   ::arg().set("lua-prequery-script", "Lua script with prequery handler (DO NOT USE)") = "";
   ::arg().set("lua-dnsupdate-policy-script", "Lua script with DNS update policy handler") = "";
+  ::arg().set("lua-global-include-dir", "Include *.lua files from this directory into Lua contexts") = "";
 
   ::arg().setSwitch("traceback-handler", "Enable the traceback handler (Linux only)") = "yes";
   ::arg().setSwitch("direct-dnskey", "Fetch DNSKEY, CDS and CDNSKEY RRs from backend during DNSKEY or CDS/CDNSKEY synthesis") = "no";
@@ -306,14 +309,18 @@ static void declareArguments()
 
   ::arg().setSwitch("expand-alias", "Expand ALIAS records") = "no";
   ::arg().set("outgoing-axfr-expand-alias", "Expand ALIAS records during outgoing AXFR") = "no";
+  ::arg().setSwitch("resolve-across-zones", "Resolve CNAME targets and other referrals across local zones") = "yes";
   ::arg().setSwitch("8bit-dns", "Allow 8bit dns queries") = "no";
 #ifdef HAVE_LUA_RECORDS
   ::arg().setSwitch("enable-lua-records", "Process LUA records for all zones (metadata overrides this)") = "no";
+  ::arg().setSwitch("lua-records-insert-whitespace", "Insert whitespace when combining LUA chunks") = "no";
   ::arg().set("lua-records-exec-limit", "LUA records scripts execution limit (instructions count). Values <= 0 mean no limit") = "1000";
   ::arg().set("lua-health-checks-expire-delay", "Stops doing health checks after the record hasn't been used for that delay (in seconds)") = "3600";
   ::arg().set("lua-health-checks-interval", "LUA records health checks monitoring interval in seconds") = "5";
+  ::arg().set("lua-consistent-hashes-cleanup-interval", "Pre-computed hashes cleanup interval (in seconds)") = "3600";
+  ::arg().set("lua-consistent-hashes-expire-delay", "Cleanup pre-computed hashes that haven't been used for the given delay (in seconds). See pickchashed() LUA function") = "86400";
 #endif
-  ::arg().setSwitch("axfr-lower-serial", "Also AXFR a zone from a master with a lower serial") = "no";
+  ::arg().setSwitch("axfr-lower-serial", "Also AXFR a zone from a primary with a lower serial") = "no";
 
   ::arg().set("lua-axfr-script", "Script to be used to edit incoming AXFRs") = "";
   ::arg().set("xfr-max-received-mbytes", "Maximum number of megabytes received from an incoming XFR") = "100";
@@ -331,6 +338,7 @@ static void declareArguments()
   ::arg().set("rng", "Specify the random number generator to use. Valid values are auto,sodium,openssl,getrandom,arc4random,urandom.") = "auto";
 
   ::arg().set("default-catalog-zone", "Catalog zone to assign newly created primary zones (via the API) to") = "";
+
 #ifdef ENABLE_GSS_TSIG
   ::arg().setSwitch("enable-gss-tsig", "Enable GSS TSIG processing") = "no";
 #endif
@@ -701,7 +709,10 @@ static void mainthread()
   g_doLuaRecord = ::arg().mustDo("enable-lua-records");
   g_LuaRecordSharedState = (::arg()["enable-lua-records"] == "shared");
   g_luaRecordExecLimit = ::arg().asNum("lua-records-exec-limit");
+  g_luaRecordInsertWhitespace = ::arg().mustDo("lua-records-insert-whitespace");
   g_luaHealthChecksInterval = ::arg().asNum("lua-health-checks-interval");
+  g_luaConsistentHashesExpireDelay = ::arg().asNum("lua-consistent-hashes-expire-delay");
+  g_luaConsistentHashesCleanupInterval = ::arg().asNum("lua-consistent-hashes-cleanup-interval");
   g_luaHealthChecksExpireDelay = ::arg().asNum("lua-health-checks-expire-delay");
 #endif
 #ifdef ENABLE_GSS_TSIG
@@ -777,7 +788,7 @@ static void mainthread()
   Utility::dropUserPrivs(newuid);
 
   if (::arg().mustDo("resolver")) {
-    DP = std::make_unique<DNSProxy>(::arg()["resolver"]);
+    DP = std::make_unique<DNSProxy>(::arg()["resolver"], ::arg()["dnsproxy-udp-port-range"]);
     DP->go();
   }
 
@@ -849,8 +860,9 @@ static void mainthread()
   // NOW SAFE TO CREATE THREADS!
   s_dynListener->go();
 
-  if (::arg().mustDo("webserver") || ::arg().mustDo("api"))
-    webserver.go();
+  if (::arg().mustDo("webserver") || ::arg().mustDo("api")) {
+    webserver.go(S);
+  }
 
   if (::arg().mustDo("primary") || ::arg().mustDo("secondary") || !::arg()["forward-notify"].empty())
     Communicator.go();
@@ -1014,11 +1026,11 @@ static int guardian(int argc, char** argv)
   int infd = 0, outfd = 1;
 
   DynListener dlg(g_programname);
-  dlg.registerFunc("QUIT", &DLQuitHandler, "quit daemon");
-  dlg.registerFunc("CYCLE", &DLCycleHandler, "restart instance");
-  dlg.registerFunc("PING", &DLPingHandler, "ping guardian");
-  dlg.registerFunc("STATUS", &DLStatusHandler, "get instance status from guardian");
-  dlg.registerRestFunc(&DLRestHandler);
+  DynListener::registerExitFunc("QUIT", &DLQuitHandler);
+  DynListener::registerFunc("CYCLE", &DLCycleHandler, "restart instance");
+  DynListener::registerFunc("PING", &DLPingHandler, "ping guardian");
+  DynListener::registerFunc("STATUS", &DLStatusHandler, "get instance status from guardian");
+  DynListener::registerRestFunc(&DLRestHandler);
   dlg.go();
   string progname = argv[0];
 
@@ -1193,6 +1205,7 @@ static void sigTermHandler([[maybe_unused]] int signal)
 #endif /* COVERAGE */
 
 //! The main function of pdns, the pdns process
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int main(int argc, char** argv)
 {
   versionSetProduct(ProductAuthoritative);
@@ -1217,9 +1230,9 @@ int main(int argc, char** argv)
     ::arg().laxParse(argc, argv); // do a lax parse
 
     if (::arg().mustDo("version")) {
-      showProductVersion();
-      showBuildConfiguration();
-      exit(99);
+      cout << getProductVersion();
+      cout << getBuildConfiguration();
+      return 0;
     }
 
     if (::arg()["config-name"] != "")
@@ -1242,36 +1255,14 @@ int main(int argc, char** argv)
         g_log << Logger::Error << "Unknown logging facility " << ::arg().asNum("logging-facility") << endl;
     }
 
-    if (::arg().mustDo("master"))
-      ::arg().set("primary") = "yes";
-    if (::arg().mustDo("slave"))
-      ::arg().set("secondary") = "yes";
-    if (::arg().mustDo("slave-renotify"))
-      ::arg().set("secondary-do-renotify") = "yes";
-    if (::arg().mustDo("superslave"))
-      ::arg().set("autosecondary") = "yes";
-    if (::arg().mustDo("allow-unsigned-supermaster"))
-      ::arg().set("allow-unsigned-autoprimary") = "yes";
     if (!::arg().isEmpty("domain-metadata-cache-ttl"))
       ::arg().set("zone-metadata-cache-ttl") = ::arg()["domain-metadata-cache-ttl"];
-    if (!::arg().isEmpty("slave-cycle-interval"))
-      ::arg().set("xfr-cycle-interval") = ::arg()["slave-cycle-interval"];
 
     // this mirroring back is on purpose, so that config dumps reflect the actual setting on both names
-    if (::arg().mustDo("primary"))
-      ::arg().set("master") = "yes";
-    if (::arg().mustDo("secondary"))
-      ::arg().set("slave") = "yes";
-    if (::arg().mustDo("secondary-do-renotify"))
-      ::arg().set("slave-renotify") = "yes";
-    if (::arg().mustDo("autosecondary"))
-      ::arg().set("superslave") = "yes";
-    if (::arg().mustDo("allow-unsigned-autoprimary"))
-      ::arg().set("allow-unsigned-supermaster") = "yes";
     ::arg().set("domain-metadata-cache-ttl") = ::arg()["zone-metadata-cache-ttl"];
-    ::arg().set("slave-cycle-interval") = ::arg()["xfr-cycle-interval"];
 
     g_log.setLoglevel((Logger::Urgency)(::arg().asNum("loglevel")));
+    g_log.setPrefixed(::arg().mustDo("loglevel-show"));
     g_log.disableSyslog(::arg().mustDo("disable-syslog"));
     g_log.setTimestamps(::arg().mustDo("log-timestamp"));
     g_log.toConsole((Logger::Urgency)(::arg().asNum("loglevel")));
@@ -1424,7 +1415,7 @@ int main(int argc, char** argv)
     }
     DynListener::registerFunc("SHOW", &DLShowHandler, "show a specific statistic or * to get a list", "<statistic>");
     DynListener::registerFunc("RPING", &DLPingHandler, "ping instance");
-    DynListener::registerFunc("QUIT", &DLRQuitHandler, "quit daemon");
+    DynListener::registerExitFunc("QUIT", &DLRQuitHandler);
     DynListener::registerFunc("UPTIME", &DLUptimeHandler, "get instance uptime");
     DynListener::registerFunc("NOTIFY-HOST", &DLNotifyHostHandler, "notify host for specific zone", "<zone> <host>");
     DynListener::registerFunc("NOTIFY", &DLNotifyHandler, "queue a notification", "<zone>");
@@ -1437,7 +1428,7 @@ int main(int argc, char** argv)
     DynListener::registerFunc("RESPSIZES", &DLRSizesHandler, "get histogram of response sizes");
     DynListener::registerFunc("REMOTES", &DLRemotesHandler, "get top remotes");
     DynListener::registerFunc("SET", &DLSettingsHandler, "set config variables", "<var> <value>");
-    DynListener::registerFunc("RETRIEVE", &DLNotifyRetrieveHandler, "retrieve slave zone", "<zone> [<ip>]");
+    DynListener::registerFunc("RETRIEVE", &DLNotifyRetrieveHandler, "retrieve secondary zone", "<zone> [<ip>]");
     DynListener::registerFunc("CURRENT-CONFIG", &DLCurrentConfigHandler, "retrieve the current configuration", "[diff]");
     DynListener::registerFunc("LIST-ZONES", &DLListZones, "show list of zones", "[primary|secondary|native|consumer|producer]");
     DynListener::registerFunc("TOKEN-LOGIN", &DLTokenLogin, "Login to a PKCS#11 token", "<module> <slot> <pin>");
@@ -1514,7 +1505,9 @@ int main(int argc, char** argv)
 
   DLOG(g_log << Logger::Warning << "Verbose logging in effect" << endl);
 
-  showProductVersion();
+  for (const string& line : getProductVersionLines()) {
+    g_log << Logger::Info << line << endl;
+  }
 
   try {
     mainthread();

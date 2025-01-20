@@ -8,10 +8,10 @@
 #include <cerrno>
 #include <iostream>
 #include <thread>
+#include <string_view>
 
 #include <boost/algorithm/string.hpp>
 #include <h2o.h>
-//#include <h2o/http1.h>
 #include <h2o/http2.h>
 
 #include <openssl/err.h>
@@ -26,11 +26,10 @@
 #include "dns.hh"
 #include "dolog.hh"
 #include "dnsdist-concurrent-connections.hh"
+#include "dnsdist-dnsparser.hh"
 #include "dnsdist-ecs.hh"
 #include "dnsdist-metrics.hh"
 #include "dnsdist-proxy-protocol.hh"
-#include "dnsdist-rules.hh"
-#include "dnsdist-xpf.hh"
 #include "libssl.hh"
 #include "threadname.hh"
 
@@ -57,7 +56,7 @@
 */
 
 /* 'Intermediate' compatibility from https://wiki.mozilla.org/Security/Server_Side_TLS#Intermediate_compatibility_.28default.29 */
-static constexpr string_view DOH_DEFAULT_CIPHERS = "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS";
+static constexpr std::string_view DOH_DEFAULT_CIPHERS = "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS";
 
 class DOHAcceptContext
 {
@@ -159,7 +158,8 @@ public:
 
   std::map<int, std::string> d_ocspResponses;
   std::unique_ptr<OpenSSLTLSTicketKeysRing> d_ticketKeys{nullptr};
-  std::unique_ptr<FILE, int(*)(FILE*)> d_keyLogFile{nullptr, fclose};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
+  pdns::UniqueFilePtr d_keyLogFile{nullptr};
   ClientState* d_cs{nullptr};
   time_t d_ticketsKeyRotationDelay{0};
 
@@ -207,10 +207,10 @@ struct DOHServerConfig
   DOHServerConfig& operator=(DOHServerConfig&&) = delete;
   ~DOHServerConfig() = default;
 
-  LocalHolders holders;
   std::set<std::string, std::less<>> paths;
   h2o_globalconf_t h2o_config{};
   h2o_context_t h2o_ctx{};
+  std::unique_ptr<h2o_socket_t,decltype(&h2o_socket_close)> h2o_socket{nullptr, h2o_socket_close};
   std::shared_ptr<DOHAcceptContext> accept_ctx{nullptr};
   ClientState* clientState{nullptr};
   std::shared_ptr<DOHFrontend> dohFrontend{nullptr};
@@ -499,15 +499,12 @@ public:
     DNSResponse dr(dohUnit->ids, dohUnit->response, dohUnit->downstream);
 
     dnsheader cleartextDH{};
-    memcpy(&cleartextDH, dr.getHeader(), sizeof(cleartextDH));
+    memcpy(&cleartextDH, dr.getHeader().get(), sizeof(cleartextDH));
 
     if (!response.isAsync()) {
-      static thread_local LocalStateHolder<vector<DNSDistResponseRuleAction>> localRespRuleActions = g_respruleactions.getLocal();
-      static thread_local LocalStateHolder<vector<DNSDistResponseRuleAction>> localCacheInsertedRespRuleActions = g_cacheInsertedRespRuleActions.getLocal();
-
       dr.ids.du = std::move(dohUnit);
 
-      if (!processResponse(dynamic_cast<DOHUnit*>(dr.ids.du.get())->response, *localRespRuleActions, *localCacheInsertedRespRuleActions, dr, false)) {
+      if (!processResponse(dynamic_cast<DOHUnit*>(dr.ids.du.get())->response, dr, false)) {
         if (dr.ids.du) {
           dohUnit = getDUFromIDS(dr.ids);
           dohUnit->status_code = 503;
@@ -698,7 +695,6 @@ static void processDOHQuery(DOHUnitUniquePtr&& unit, bool inMainThread = false)
 
     remote = ids.origRemote;
     DOHServerConfig* dsc = unit->dsc;
-    auto& holders = dsc->holders;
     ClientState& clientState = *dsc->clientState;
 
     if (unit->query.size() < sizeof(dnsheader) || unit->query.size() > std::numeric_limits<uint16_t>::max()) {
@@ -716,17 +712,20 @@ static void processDOHQuery(DOHUnitUniquePtr&& unit, bool inMainThread = false)
     {
       /* don't keep that pointer around, it will be invalidated if the buffer is ever resized */
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      auto* dnsHeader = reinterpret_cast<struct dnsheader*>(unit->query.data());
+      const dnsheader_aligned dnsHeader(unit->query.data());
 
-      if (!checkQueryHeaders(dnsHeader, clientState)) {
+      if (!checkQueryHeaders(*dnsHeader, clientState)) {
         unit->status_code = 400;
         handleImmediateResponse(std::move(unit), "DoH invalid headers");
         return;
       }
 
       if (dnsHeader->qdcount == 0U) {
-        dnsHeader->rcode = RCode::NotImp;
-        dnsHeader->qr = true;
+        dnsdist::PacketMangling::editDNSHeaderFromPacket(unit->query, [](dnsheader& header) {
+          header.rcode = RCode::NotImp;
+          header.qr = true;
+          return true;
+        });
         unit->response = std::move(unit->query);
 
         handleImmediateResponse(std::move(unit), "DoH empty query");
@@ -751,12 +750,12 @@ static void processDOHQuery(DOHUnitUniquePtr&& unit, bool inMainThread = false)
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     ids.qname = DNSName(reinterpret_cast<const char*>(unit->query.data()), static_cast<int>(unit->query.size()), static_cast<int>(sizeof(dnsheader)), false, &ids.qtype, &ids.qclass);
     DNSQuestion dnsQuestion(ids, unit->query);
-    const uint16_t* flags = getFlagsFromDNSHeader(dnsQuestion.getHeader());
+    const uint16_t* flags = getFlagsFromDNSHeader(dnsQuestion.getHeader().get());
     ids.origFlags = *flags;
     ids.cs = &clientState;
     dnsQuestion.sni = std::move(unit->sni);
     ids.du = std::move(unit);
-    auto result = processQuery(dnsQuestion, holders, downstream);
+    auto result = processQuery(dnsQuestion, downstream);
 
     if (result == ProcessQueryResult::Drop) {
       unit = getDUFromIDS(ids);
@@ -808,6 +807,10 @@ static void processDOHQuery(DOHUnitUniquePtr&& unit, bool inMainThread = false)
 
       /* this moves du->ids, careful! */
       auto cpq = std::make_unique<DoHCrossProtocolQuery>(std::move(unit), false);
+      if (!cpq) {
+        // make linters happy
+        return;
+      }
       cpq->query.d_proxyProtocolPayload = std::move(proxyProtocolPayload);
 
       if (downstream->passCrossProtocolQuery(std::move(cpq))) {
@@ -1067,8 +1070,7 @@ static int doh_handler(h2o_handler_t *self, h2o_req_t *req)
       }
     }
 
-    auto& holders = dsc->holders;
-    if (!holders.acl->match(remote)) {
+    if (!dnsdist::configuration::getCurrentRuntimeConfiguration().d_ACL.match(remote)) {
       ++dnsdist::metrics::g_stats.aclDrops;
       vinfolog("Query from %s (DoH) dropped because of ACL", remote.toStringWithPort());
       h2o_send_error_403(req, "Forbidden", "DoH query not allowed because of ACL", 0);
@@ -1322,9 +1324,10 @@ static void on_dnsdist(h2o_socket_t *listener, const char *err)
         dohUnit->query.size() > dohUnit->ids.d_proxyProtocolPayloadSize &&
         (dohUnit->query.size() - dohUnit->ids.d_proxyProtocolPayloadSize) > sizeof(dnsheader)) {
       /* restoring the original ID */
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      auto* queryDH = reinterpret_cast<struct dnsheader*>(&dohUnit->query.at(dohUnit->ids.d_proxyProtocolPayloadSize));
-      queryDH->id = dohUnit->ids.origID;
+      dnsdist::PacketMangling::editDNSHeaderFromRawPacket(&dohUnit->query.at(dohUnit->ids.d_proxyProtocolPayloadSize), [oldID=dohUnit->ids.origID](dnsheader& header) {
+        header.id = oldID;
+        return true;
+      });
       dohUnit->ids.forwardedOverUDP = false;
       dohUnit->tcp = true;
       dohUnit->truncated = false;
@@ -1378,7 +1381,7 @@ static void on_accept(h2o_socket_t *listener, const char *err)
     return;
   }
 
-  if (dsc->dohFrontend->d_earlyACLDrop && !dsc->dohFrontend->d_trustForwardedForHeader && !dsc->holders.acl->match(remote)) {
+  if (dsc->dohFrontend->d_earlyACLDrop && !dsc->dohFrontend->d_trustForwardedForHeader && !dnsdist::configuration::getCurrentRuntimeConfiguration().d_ACL.match(remote)) {
     ++dnsdist::metrics::g_stats.aclDrops;
     vinfolog("Dropping DoH connection from %s because of ACL", remote.toStringWithPort());
     h2o_socket_close(sock);
@@ -1421,9 +1424,9 @@ static void on_accept(h2o_socket_t *listener, const char *err)
 
 static int create_listener(std::shared_ptr<DOHServerConfig>& dsc, int descriptor)
 {
-  auto* sock = h2o_evloop_socket_create(dsc->h2o_ctx.loop, descriptor, H2O_SOCKET_FLAG_DONT_READ);
-  sock->data = dsc.get();
-  h2o_socket_read_start(sock, on_accept);
+  dsc->h2o_socket = std::unique_ptr<h2o_socket_t, decltype(&h2o_socket_close)>{h2o_evloop_socket_create(dsc->h2o_ctx.loop, descriptor, H2O_SOCKET_FLAG_DONT_READ), &h2o_socket_close};
+  dsc->h2o_socket->data = dsc.get();
+  h2o_socket_read_start(dsc->h2o_socket.get(), on_accept);
 
   return 0;
 }
@@ -1500,7 +1503,7 @@ static void setupTLSContext(DOHAcceptContext& acceptCtx,
   libssl_set_error_counters_callback(ctx, &counters);
 
   if (!tlsConfig.d_keyLogFile.empty()) {
-    acceptCtx.d_keyLogFile = libssl_set_key_log_file(ctx, tlsConfig.d_keyLogFile);
+    acceptCtx.d_keyLogFile = libssl_set_key_log_file(ctx.get(), tlsConfig.d_keyLogFile);
   }
 
   h2o_ssl_register_alpn_protocols(ctx.get(), h2o_http2_alpn_protocols);
@@ -1590,11 +1593,11 @@ void dohThread(ClientState* clientState)
     dsc->h2o_ctx.storage.entries[0].data = dsc.get();
     ++dsc->h2o_ctx.storage.size;
 
-    auto* sock = h2o_evloop_socket_create(dsc->h2o_ctx.loop, dsc->d_responseReceiver.getDescriptor(), H2O_SOCKET_FLAG_DONT_READ);
+    auto sock = std::unique_ptr<h2o_socket_t, decltype(&h2o_socket_close)>{h2o_evloop_socket_create(dsc->h2o_ctx.loop, dsc->d_responseReceiver.getDescriptor(), H2O_SOCKET_FLAG_DONT_READ), &h2o_socket_close};
     sock->data = dsc.get();
 
     // this listens to responses from dnsdist to turn into http responses
-    h2o_socket_read_start(sock, on_dnsdist);
+    h2o_socket_read_start(sock.get(), on_dnsdist);
 
     setupAcceptContext(*dsc->accept_ctx, *dsc, false);
 
@@ -1619,6 +1622,7 @@ void dohThread(ClientState* clientState)
     }
     while (!stop);
 
+    h2o_evloop_destroy(dsc->h2o_ctx.loop);
   }
   catch (const std::exception& e) {
     throw runtime_error("DOH thread failed to launch: " + std::string(e.what()));
@@ -1640,15 +1644,12 @@ void DOHUnit::handleUDPResponse(PacketBuffer&& udpResponse, InternalQueryState&&
     }
   }
   if (!dohUnit->truncated) {
-    static thread_local LocalStateHolder<vector<DNSDistResponseRuleAction>> localRespRuleActions = g_respruleactions.getLocal();
-    static thread_local LocalStateHolder<vector<DNSDistResponseRuleAction>> localCacheInsertedRespRuleActions = g_cacheInsertedRespRuleActions.getLocal();
-
     DNSResponse dnsResponse(dohUnit->ids, udpResponse, dohUnit->downstream);
     dnsheader cleartextDH{};
-    memcpy(&cleartextDH, dnsResponse.getHeader(), sizeof(cleartextDH));
+    memcpy(&cleartextDH, dnsResponse.getHeader().get(), sizeof(cleartextDH));
 
     dnsResponse.ids.du = std::move(dohUnit);
-    if (!processResponse(udpResponse, *localRespRuleActions, *localCacheInsertedRespRuleActions, dnsResponse, false)) {
+    if (!processResponse(udpResponse, dnsResponse, false)) {
       if (dnsResponse.ids.du) {
         dohUnit = getDUFromIDS(dnsResponse.ids);
         dohUnit->status_code = 503;
@@ -1719,7 +1720,7 @@ void H2ODOHFrontend::reloadCertificates()
 {
   auto newAcceptContext = std::make_shared<DOHAcceptContext>();
   setupAcceptContext(*newAcceptContext, *d_dsc, true);
-  std::atomic_store_explicit(&d_dsc->accept_ctx, newAcceptContext, std::memory_order_release);
+  std::atomic_store_explicit(&d_dsc->accept_ctx, std::move(newAcceptContext), std::memory_order_release);
 }
 
 void H2ODOHFrontend::setup()

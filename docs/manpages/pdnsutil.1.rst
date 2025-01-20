@@ -24,13 +24,13 @@ Options
 --config-name <NAME>    Virtual configuration name
 --config-dir <DIR>      Location of pdns.conf. Default is /etc/powerdns.
 
-COMMANDS
+Commands
 --------
 
 There are many available commands, this section splits them up into
-their respective uses
+their respective uses.
 
-DNSSEC RELATED COMMANDS
+DNSSEC-related Commands
 -----------------------
 
 Several commands manipulate the DNSSEC keys and options for zones. Some
@@ -103,12 +103,13 @@ set-nsec3 *ZONE* ['*HASH-ALGORITHM* *FLAGS* *ITERATIONS* *SALT*'] [**narrow**]
     NSEC3 records are created. The NSEC3 parameters must be quoted on
     the command line. *HASH-ALGORITHM* must be 1 (SHA-1). Setting
     *FLAGS* to 1 enables NSEC3 opt-out operation. Only do this if you
-    know you need it. For *ITERATIONS*, please consult RFC 5155, section
-    10.3. And be aware that a high number might overload validating
+    know you need it. For *ITERATIONS*, please consult
+    :rfc:`RFC 5155<5155#section-10.3>`.
+    And be aware that a high number might overload validating
     resolvers and that a limit can be set with ``max-nsec3-iterations``
     in ``pdns.conf``. The *SALT* is a hexadecimal string encoding the bits
     for the salt, or - to use no salt. Setting **narrow** will make PowerDNS
-    send out "white lies" (RFC 7129) about the next secure record to
+    send out "white lies" (:rfc:`7129`) about the next secure record to
     prevent zone enumeration. Instead of looking it up in the database,
     it will send out the hash + 1 as the next secure record. Narrow mode
     requires online signing capabilities by the nameserver and therefore
@@ -253,7 +254,7 @@ set-options-json *ZONE* *JSON*
 set-option *ZONE* [*producer*|*consumer*] [*coo*|*unique*|*group*] *VALUE* [*VALUE* ...]
     Set or remove an option for *ZONE*. Providing an empty value removes an option.
 set-catalog *ZONE* *CATALOG*
-    Change the catalog of *ZONE* to *CATALOG*
+    Change the catalog of *ZONE* to *CATALOG*. Setting *CATALOG* to an empty "" removes *ZONE* from the catalog it is in.
 set-account *ZONE* *ACCOUNT*
     Change the account (owner) of *ZONE* to *ACCOUNT*.
 add-meta *ZONE* *ATTRIBUTE* *VALUE* [*VALUE*]...
@@ -283,6 +284,8 @@ backend-cmd *BACKEND* *CMD* [*CMD...*]
     Send a text command to a backend for execution. GSQL backends will
     take SQL commands, other backends may take different things. Be
     careful!
+backend-lookup *BACKEND* *NAME* [*TYPE* [*CLIENT-IP-SUBNET*]]
+    Perform a backend record lookup.
 bench-db [*FILE*]
     Perform a benchmark of the backend-database.
     *FILE* can be a file with a list, one per line, of zone names to use for this.

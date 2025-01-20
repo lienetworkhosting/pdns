@@ -630,7 +630,7 @@ bool DNSSECKeeper::checkKeys(const DNSName& zone, std::optional<std::reference_w
   return retval;
 }
 
-void DNSSECKeeper::getPreRRSIGs(UeberBackend& db, vector<DNSZoneRecord>& rrs, uint32_t signTTL)
+void DNSSECKeeper::getPreRRSIGs(UeberBackend& db, vector<DNSZoneRecord>& rrs, uint32_t signTTL, DNSPacket* packet)
 {
   if(rrs.empty()) {
     return;
@@ -640,7 +640,7 @@ void DNSSECKeeper::getPreRRSIGs(UeberBackend& db, vector<DNSZoneRecord>& rrs, ui
 
   DNSZoneRecord dzr;
 
-  db.lookup(QType(QType::RRSIG), !rr.wildcardname.empty() ? rr.wildcardname : rr.dr.d_name, rr.domain_id);
+  db.lookup(QType(QType::RRSIG), !rr.wildcardname.empty() ? rr.wildcardname : rr.dr.d_name, rr.domain_id, packet);
   while(db.get(dzr)) {
     auto rrsig = getRR<RRSIGRecordContent>(dzr.dr);
     if (rrsig->d_type == rr.dr.d_type) {
@@ -668,13 +668,13 @@ bool DNSSECKeeper::TSIGGrantsAccess(const DNSName& zone, const DNSName& keyname)
   return false;
 }
 
-bool DNSSECKeeper::getTSIGForAccess(const DNSName& zone, const ComboAddress& /* master */, DNSName* keyname)
+bool DNSSECKeeper::getTSIGForAccess(const DNSName& zone, const ComboAddress& /* primary */, DNSName* keyname)
 {
   vector<string> keynames;
   d_keymetadb->getDomainMetadata(zone, "AXFR-MASTER-TSIG", keynames);
   keyname->trimToLabels(0);
 
-  // XXX FIXME this should check for a specific master!
+  // XXX FIXME this should check for a specific primary!
   for(const string& dbkey :  keynames) {
     *keyname=DNSName(dbkey);
     return true;

@@ -27,7 +27,7 @@ class AuthTest(AssertEqualDNSMessageMixin, unittest.TestCase):
     _config_params = []
 
     _config_template_default = """
-module-dir=../regression-tests/modules
+module-dir={PDNS_MODULE_DIR}
 daemon=no
 bind-config={confdir}/named.conf
 bind-dnssec-db={bind_dnssec_db}
@@ -69,12 +69,15 @@ PrivateKey: Lt0v0Gol3pRUFM7fDdcy0IWN0O/MnEmVPA+VylL8Y4U=
         """,
     }
 
-    _auth_cmd = ['authbind',
-                 os.environ['PDNS']]
+    _auth_cmd = [os.environ['PDNS']]
+    if sys.platform != 'darwin':
+        _auth_cmd = ['authbind'] + _auth_cmd
+
     _auth_env = {}
     _auths = {}
 
     _PREFIX = os.environ['PREFIX']
+    _PDNS_MODULE_DIR = os.environ['PDNS_MODULE_DIR']
 
 
     @classmethod
@@ -116,7 +119,9 @@ options {
         with open(os.path.join(confdir, 'pdns.conf'), 'w') as pdnsconf:
             pdnsconf.write(cls._config_template_default.format(
                 confdir=confdir, prefix=cls._PREFIX,
-                bind_dnssec_db=bind_dnssec_db))
+                bind_dnssec_db=bind_dnssec_db,
+                PDNS_MODULE_DIR=cls._PDNS_MODULE_DIR,
+            ))
             pdnsconf.write(cls._config_template % params)
 
         os.system("sqlite3 ./configs/auth/powerdns.sqlite < ../modules/gsqlite3backend/schema.sqlite3.sql")
@@ -243,10 +248,6 @@ options {
     @classmethod
     def tearDownResponders(cls):
         pass
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tearDownAuth()
 
     @classmethod
     def killProcess(cls, p):
@@ -435,7 +436,7 @@ options {
                 self.assertEqual(ans, rrset, "'%s' != '%s'" % (ans.to_text(), rrset.to_text()))
                 found = True
 
-        if not found :
+        if not found:
             raise AssertionError("RRset not found in answer\n\n%s" % ret)
 
     def assertRRsetInAdditional(self, msg, rrset):
@@ -459,7 +460,7 @@ options {
                 self.assertEqual(ans, rrset, "'%s' != '%s'" % (ans.to_text(), rrset.to_text()))
                 found = True
 
-        if not found :
+        if not found:
             raise AssertionError("RRset not found in answer\n\n%s" % ret)
 
     def sortRRsets(self, rrsets):
@@ -490,6 +491,29 @@ options {
 
         if not found:
             raise AssertionError("RRset not found in answer\n%s" %
+                                 "\n".join(([ans.to_text() for ans in msg.answer])))
+
+    def assertNoneRRsetInAnswer(self, msg, rrsets):
+        """Asserts that none of the supplied rrsets exist (without comparing TTL)
+        in the answer section of msg
+
+        @param msg: the dns.message.Message to check
+        @param rrsets: an array of dns.rrset.RRset object"""
+
+        if not isinstance(msg, dns.message.Message):
+            raise TypeError("msg is not a dns.message.Message")
+
+        found = False
+        for rrset in rrsets:
+            if not isinstance(rrset, dns.rrset.RRset):
+                raise TypeError("rrset is not a dns.rrset.RRset")
+            for ans in msg.answer:
+                if ans.match(rrset.name, rrset.rdclass, rrset.rdtype, 0, None):
+                    if ans == rrset:
+                        found = True
+
+        if found:
+            raise AssertionError("RRset incorrectly found in answer\n%s" %
                                  "\n".join(([ans.to_text() for ans in msg.answer])))
 
     def assertMatchingRRSIGInAnswer(self, msg, coveredRRset, keys=None):

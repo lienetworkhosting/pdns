@@ -24,7 +24,7 @@ at least the following information (if they are relevant):
 
 ## Filing an Issue or Bug
 **Note:** if you're planning to file a security bug, look at our
-[Security Policy](https://doc.powerdns.com/md/security/) first.
+[Security Policy](https://github.com/PowerDNS/pdns/security/policy) first.
 
 When filing an issue or bug report, make the title of the issue a very short
 summary (e.g. "Recursor crash when some-setting is set to 'crash'"). In the
@@ -58,7 +58,7 @@ A pull request, at the least, should have:
 
 And must:
 * Be filed against the master branch before any release branch
-* Pass all tests in our CI (currently Github Actions and CircleCI)
+* Pass all tests in our CI (currently GitHub Actions and CircleCI)
 
 Information on the tests can be found in the repository at
 [/regression-tests/README.md](https://github.com/PowerDNS/pdns/blob/master/regression-tests/README.md)
@@ -120,7 +120,7 @@ However, it may happen that existing code could produce warnings and can show up
 1. Fix the warnings in a separate commit.
 2. If fixing the warning would be too much trouble at this point in time, disabling the specific warning using the `// NOLINTNEXTLINE` or `// NOLINT` directives can be acceptable given the following is adhered to:
 
-Any added `// NOLINTNEXTLINE` or `// NOLINT` directive or others need to have a Github issue title, issue number and link next to them in the description along with the name or Github nickname of the person that wrote it. The Github issue must have an assignee and an accurate description of what needs to be done. As an example:
+Any added `// NOLINTNEXTLINE` or `// NOLINT` directive or others need to have a GitHub issue title, issue number and link next to them in the description along with the name or GitHub nickname of the person that wrote it. The GitHub issue must have an assignee and an accurate description of what needs to be done. As an example:
 
 `// NOLINTNEXTLINE(<warning-name>) <issue-number> <issue-link> <person-name>: <issue-title> + a short comment if needed.`
 

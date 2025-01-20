@@ -20,38 +20,37 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "ext/lmdb-safe/lmdb-safe.hh"
-#include <lmdb.h>
-#include <stdexcept>
-#include <utility>
-#ifdef HAVE_CONFIG_H
+#include "lmdbbackend.hh"
+
 #include "config.h"
-#endif
-#include "pdns/utility.hh"
-#include "pdns/dnsbackend.hh"
-#include "pdns/dns.hh"
-#include "pdns/dnspacket.hh"
-#include "pdns/base32.hh"
-#include "pdns/dnssecinfra.hh"
-#include "pdns/pdnsexception.hh"
-#include "pdns/logger.hh"
-#include "pdns/version.hh"
+#include "ext/lmdb-safe/lmdb-safe.hh"
 #include "pdns/arguments.hh"
-#include "pdns/lock.hh"
+#include "pdns/base32.hh"
+#include "pdns/dns.hh"
+#include "pdns/dnsbackend.hh"
+#include "pdns/dnspacket.hh"
+#include "pdns/dnssecinfra.hh"
+#include "pdns/logger.hh"
+#include "pdns/pdnsexception.hh"
 #include "pdns/uuid-utils.hh"
-#include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_iarchive.hpp>
-#include <boost/serialization/vector.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/iostreams/device/back_inserter.hpp>
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/utility.hpp>
+#include <boost/serialization/vector.hpp>
 #include <boost/uuid/uuid_serialize.hpp>
-
-#include <boost/iostreams/device/back_inserter.hpp>
-
-#include <stdio.h>
+#include <cstdio>
+#include <cstring>
+#include <lmdb.h>
+#include <memory>
+#include <stdexcept>
 #include <unistd.h>
+#include <utility>
 
-#include "lmdbbackend.hh"
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
 
 #define SCHEMAVERSION 5
 
@@ -60,60 +59,62 @@ BOOST_CLASS_VERSION(LMDBBackend::KeyDataDB, 1)
 BOOST_CLASS_VERSION(DomainInfo, 1)
 
 static bool s_first = true;
-static int s_shards = 0;
+static uint32_t s_shards = 0;
 static std::mutex s_lmdbStartupLock;
 
 std::pair<uint32_t, uint32_t> LMDBBackend::getSchemaVersionAndShards(std::string& filename)
 {
   // cerr << "getting schema version for path " << filename << endl;
 
-  uint32_t schemaversion;
+  uint32_t schemaversion = 0;
 
-  int rc;
-  MDB_env* env = nullptr;
+  MDB_env* tmpEnv = nullptr;
 
-  if ((rc = mdb_env_create(&env)) != 0) {
+  if (mdb_env_create(&tmpEnv) != 0) {
     throw std::runtime_error("mdb_env_create failed");
   }
 
-  if ((rc = mdb_env_set_mapsize(env, 0)) != 0) {
+  std::unique_ptr<MDB_env, decltype(&mdb_env_close)> env{tmpEnv, mdb_env_close};
+
+  if (mdb_env_set_mapsize(tmpEnv, 0) != 0) {
     throw std::runtime_error("mdb_env_set_mapsize failed");
   }
 
-  if ((rc = mdb_env_set_maxdbs(env, 20)) != 0) { // we need 17: 1 {"pdns"} + 4 {"domains", "keydata", "tsig", "metadata"} * 2 {v4, v5} * 2 {main, index in _0}
-    mdb_env_close(env);
+  if (mdb_env_set_maxdbs(tmpEnv, 20) != 0) { // we need 17: 1 {"pdns"} + 4 {"domains", "keydata", "tsig", "metadata"} * 2 {v4, v5} * 2 {main, index in _0}
     throw std::runtime_error("mdb_env_set_maxdbs failed");
   }
 
-  if ((rc = mdb_env_open(env, filename.c_str(), MDB_NOSUBDIR | MDB_RDONLY, 0600)) != 0) {
-    if (rc == ENOENT) {
-      // we don't have a database yet! report schema 0, with 0 shards
-      return {0u, 0u};
+  {
+    int retCode = mdb_env_open(tmpEnv, filename.c_str(), MDB_NOSUBDIR | MDB_RDONLY, 0600);
+    if (retCode != 0) {
+      if (retCode == ENOENT) {
+        // we don't have a database yet! report schema 0, with 0 shards
+        return {0U, 0U};
+      }
+      throw std::runtime_error("mdb_env_open failed");
     }
-    mdb_env_close(env);
-    throw std::runtime_error("mdb_env_open failed");
   }
 
   MDB_txn* txn = nullptr;
 
-  if ((rc = mdb_txn_begin(env, NULL, MDB_RDONLY, &txn)) != 0) {
-    mdb_env_close(env);
+  if (mdb_txn_begin(tmpEnv, nullptr, MDB_RDONLY, &txn) != 0) {
     throw std::runtime_error("mdb_txn_begin failed");
   }
 
   MDB_dbi dbi;
 
-  if ((rc = mdb_dbi_open(txn, "pdns", 0, &dbi)) != 0) {
-    if (rc == MDB_NOTFOUND) {
-      // this means nothing has been inited yet
-      // we pretend this means 5
+  {
+    int retCode = mdb_dbi_open(txn, "pdns", 0, &dbi);
+    if (retCode != 0) {
+      if (retCode == MDB_NOTFOUND) {
+        // this means nothing has been inited yet
+        // we pretend this means 5
+        mdb_txn_abort(txn);
+        return {5U, 0U};
+      }
       mdb_txn_abort(txn);
-      mdb_env_close(env);
-      return {5u, 0u};
+      throw std::runtime_error("mdb_dbi_open failed");
     }
-    mdb_txn_abort(txn);
-    mdb_env_close(env);
-    throw std::runtime_error("mdb_dbi_open failed");
   }
 
   MDB_val key, data;
@@ -121,16 +122,18 @@ std::pair<uint32_t, uint32_t> LMDBBackend::getSchemaVersionAndShards(std::string
   key.mv_data = (char*)"schemaversion";
   key.mv_size = strlen((char*)key.mv_data);
 
-  if ((rc = mdb_get(txn, dbi, &key, &data)) != 0) {
-    if (rc == MDB_NOTFOUND) {
-      // this means nothing has been inited yet
-      // we pretend this means 5
-      mdb_txn_abort(txn);
-      mdb_env_close(env);
-      return {5u, 0u};
-    }
+  {
+    int retCode = mdb_get(txn, dbi, &key, &data);
+    if (retCode != 0) {
+      if (retCode == MDB_NOTFOUND) {
+        // this means nothing has been inited yet
+        // we pretend this means 5
+        mdb_txn_abort(txn);
+        return {5U, 0U};
+      }
 
-    throw std::runtime_error("mdb_get pdns.schemaversion failed");
+      throw std::runtime_error("mdb_get pdns.schemaversion failed");
+    }
   }
 
   if (data.mv_size == 4) {
@@ -150,20 +153,23 @@ std::pair<uint32_t, uint32_t> LMDBBackend::getSchemaVersionAndShards(std::string
     throw std::runtime_error("pdns.schemaversion had unexpected size");
   }
 
-  uint32_t shards;
+  uint32_t shards = 0;
 
   key.mv_data = (char*)"shards";
   key.mv_size = strlen((char*)key.mv_data);
 
-  if ((rc = mdb_get(txn, dbi, &key, &data)) != 0) {
-    if (rc == MDB_NOTFOUND) {
-      cerr << "schemaversion was set, but shards was not. Dazed and confused, trying to exit." << endl;
-      mdb_txn_abort(txn);
-      mdb_env_close(env);
-      exit(1);
-    }
+  {
+    int retCode = mdb_get(txn, dbi, &key, &data);
+    if (retCode != 0) {
+      if (retCode == MDB_NOTFOUND) {
+        cerr << "schemaversion was set, but shards was not. Dazed and confused, trying to exit." << endl;
+        mdb_txn_abort(txn);
+        // NOLINTNEXTLINE(concurrency-mt-unsafe)
+        exit(1);
+      }
 
-    throw std::runtime_error("mdb_get pdns.shards failed");
+      throw std::runtime_error("mdb_get pdns.shards failed");
+    }
   }
 
   if (data.mv_size == 4) {
@@ -181,7 +187,6 @@ std::pair<uint32_t, uint32_t> LMDBBackend::getSchemaVersionAndShards(std::string
   }
 
   mdb_txn_abort(txn);
-  mdb_env_close(env);
 
   return {schemaversion, shards};
 }
@@ -352,8 +357,6 @@ void copyIndexDBI(MDB_txn* txn, MDB_dbi sdbi, MDB_dbi tdbi)
 
 bool LMDBBackend::upgradeToSchemav5(std::string& filename)
 {
-  int rc;
-
   auto currentSchemaVersionAndShards = getSchemaVersionAndShards(filename);
   uint32_t currentSchemaVersion = currentSchemaVersionAndShards.first;
   uint32_t shards = currentSchemaVersionAndShards.second;
@@ -364,26 +367,33 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
 
   MDB_env* env = nullptr;
 
-  if ((rc = mdb_env_create(&env)) != 0) {
+  if (mdb_env_create(&env) != 0) {
     throw std::runtime_error("mdb_env_create failed");
   }
 
-  if ((rc = mdb_env_set_maxdbs(env, 20)) != 0) {
+  if (mdb_env_set_maxdbs(env, 20) != 0) {
     mdb_env_close(env);
     throw std::runtime_error("mdb_env_set_maxdbs failed");
   }
 
-  if ((rc = mdb_env_open(env, filename.c_str(), MDB_NOSUBDIR, 0600)) != 0) {
+  if (mdb_env_open(env, filename.c_str(), MDB_NOSUBDIR, 0600) != 0) {
     mdb_env_close(env);
     throw std::runtime_error("mdb_env_open failed");
   }
 
   MDB_txn* txn = nullptr;
 
-  if ((rc = mdb_txn_begin(env, NULL, 0, &txn)) != 0) {
+  if (mdb_txn_begin(env, nullptr, 0, &txn) != 0) {
     mdb_env_close(env);
     throw std::runtime_error("mdb_txn_begin failed");
   }
+
+#ifdef HAVE_SYSTEMD
+  /* A schema migration may take a long time. Extend the startup service timeout to 1 day,
+   * but only if this is beyond the original maximum time of TimeoutStartSec=.
+   */
+  sd_notify(0, "EXTEND_TIMEOUT_USEC=86400000000");
+#endif
 
   std::cerr << "migrating shards" << std::endl;
   for (uint32_t i = 0; i < shards; i++) {
@@ -399,31 +409,32 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     std::cerr << "migrating shard " << shardfile << std::endl;
     MDB_env* shenv = nullptr;
 
-    if ((rc = mdb_env_create(&shenv)) != 0) {
+    if (mdb_env_create(&shenv) != 0) {
       throw std::runtime_error("mdb_env_create failed");
     }
 
-    if ((rc = mdb_env_set_maxdbs(shenv, 8)) != 0) {
+    if (mdb_env_set_maxdbs(shenv, 8) != 0) {
       mdb_env_close(env);
       throw std::runtime_error("mdb_env_set_maxdbs failed");
     }
 
-    if ((rc = mdb_env_open(shenv, shardfile.c_str(), MDB_NOSUBDIR, 0600)) != 0) {
+    if (mdb_env_open(shenv, shardfile.c_str(), MDB_NOSUBDIR, 0600) != 0) {
       mdb_env_close(env);
       throw std::runtime_error("mdb_env_open failed");
     }
 
     MDB_txn* shtxn = nullptr;
 
-    if ((rc = mdb_txn_begin(shenv, NULL, 0, &shtxn)) != 0) {
+    if (mdb_txn_begin(shenv, nullptr, 0, &shtxn) != 0) {
       mdb_env_close(env);
       throw std::runtime_error("mdb_txn_begin failed");
     }
 
-    MDB_dbi shdbi;
+    MDB_dbi shdbi = 0;
 
-    if ((rc = mdb_dbi_open(shtxn, "records", 0, &shdbi)) != 0) {
-      if (rc == MDB_NOTFOUND) {
+    const auto dbiOpenRc = mdb_dbi_open(shtxn, "records", 0, &shdbi);
+    if (dbiOpenRc != 0) {
+      if (dbiOpenRc == MDB_NOTFOUND) {
         mdb_txn_abort(shtxn);
         mdb_env_close(shenv);
         continue;
@@ -433,9 +444,9 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
       throw std::runtime_error("mdb_dbi_open shard records failed");
     }
 
-    MDB_dbi shdbi2;
+    MDB_dbi shdbi2 = 0;
 
-    if ((rc = mdb_dbi_open(shtxn, "records_v5", MDB_CREATE, &shdbi2)) != 0) {
+    if (mdb_dbi_open(shtxn, "records_v5", MDB_CREATE, &shdbi2) != 0) {
       mdb_dbi_close(shenv, shdbi);
       mdb_txn_abort(shtxn);
       mdb_env_close(shenv);
@@ -459,8 +470,8 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     mdb_env_close(shenv);
   }
 
-  std::array<MDB_dbi, 4> fromtypeddbi;
-  std::array<MDB_dbi, 4> totypeddbi;
+  std::array<MDB_dbi, 4> fromtypeddbi{};
+  std::array<MDB_dbi, 4> totypeddbi{};
 
   int index = 0;
 
@@ -468,13 +479,16 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     std::cerr << "migrating " << dbname << std::endl;
     std::string tdbname = dbname + "_v5";
 
-    if ((rc = mdb_dbi_open(txn, dbname.c_str(), 0, &fromtypeddbi[index])) != 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    if (mdb_dbi_open(txn, dbname.c_str(), 0, &fromtypeddbi[index]) != 0) {
       mdb_txn_abort(txn);
       mdb_env_close(env);
       throw std::runtime_error("mdb_dbi_open typeddbi failed");
     }
 
-    if ((rc = mdb_dbi_open(txn, tdbname.c_str(), MDB_CREATE, &totypeddbi[index])) != 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    if (mdb_dbi_open(txn, tdbname.c_str(), MDB_CREATE, &totypeddbi[index]) != 0) {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, fromtypeddbi[index]);
       mdb_txn_abort(txn);
       mdb_env_close(env);
@@ -482,10 +496,13 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     }
 
     try {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       copyTypedDBI(txn, fromtypeddbi[index], totypeddbi[index]);
     }
     catch (std::exception& e) {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, totypeddbi[index]);
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, fromtypeddbi[index]);
       mdb_txn_abort(txn);
       mdb_env_close(env);
@@ -499,8 +516,8 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     index++;
   }
 
-  std::array<MDB_dbi, 4> fromindexdbi;
-  std::array<MDB_dbi, 4> toindexdbi;
+  std::array<MDB_dbi, 4> fromindexdbi{};
+  std::array<MDB_dbi, 4> toindexdbi{};
 
   index = 0;
 
@@ -509,13 +526,16 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     std::cerr << "migrating " << dbname << std::endl;
     std::string tdbname = dbname + "_v5_0";
 
-    if ((rc = mdb_dbi_open(txn, fdbname.c_str(), 0, &fromindexdbi[index])) != 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    if (mdb_dbi_open(txn, fdbname.c_str(), 0, &fromindexdbi[index]) != 0) {
       mdb_txn_abort(txn);
       mdb_env_close(env);
       throw std::runtime_error("mdb_dbi_open indexdbi failed");
     }
 
-    if ((rc = mdb_dbi_open(txn, tdbname.c_str(), MDB_CREATE, &toindexdbi[index])) != 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    if (mdb_dbi_open(txn, tdbname.c_str(), MDB_CREATE, &toindexdbi[index]) != 0) {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, fromindexdbi[index]);
       mdb_txn_abort(txn);
       mdb_env_close(env);
@@ -523,10 +543,13 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     }
 
     try {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       copyIndexDBI(txn, fromindexdbi[index], toindexdbi[index]);
     }
     catch (std::exception& e) {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, toindexdbi[index]);
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
       mdb_dbi_close(env, fromindexdbi[index]);
       mdb_txn_abort(txn);
       mdb_env_close(env);
@@ -540,16 +563,17 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     index++;
   }
 
-  MDB_dbi dbi;
+  MDB_dbi dbi = 0;
 
   // finally, migrate the pdns db
-  if ((rc = mdb_dbi_open(txn, "pdns", 0, &dbi)) != 0) {
+  if (mdb_dbi_open(txn, "pdns", 0, &dbi) != 0) {
     mdb_txn_abort(txn);
     mdb_env_close(env);
     throw std::runtime_error("mdb_dbi_open pdns failed");
   }
 
-  MDB_val key, data;
+  MDB_val key;
+  MDB_val data;
 
   std::string header(LMDBLS::LS_MIN_HEADER_SIZE, '\0');
 
@@ -559,16 +583,15 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     key.mv_data = (char*)keyname.c_str();
     key.mv_size = keyname.size();
 
-    if ((rc = mdb_get(txn, dbi, &key, &data))) {
+    if (mdb_get(txn, dbi, &key, &data) != 0) {
       throw std::runtime_error("mdb_get pdns.shards failed");
     }
-
-    uint32_t value;
 
     if (data.mv_size != sizeof(uint32_t)) {
       throw std::runtime_error("got non-uint32_t key");
     }
 
+    uint32_t value = 0;
     memcpy((void*)&value, data.mv_data, sizeof(uint32_t));
 
     value = htonl(value);
@@ -576,17 +599,16 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
       value = htonl(5);
     }
 
-    std::string sdata((char*)data.mv_data, data.mv_size);
-
+    std::string sdata(static_cast<char*>(data.mv_data), data.mv_size);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-cstyle-cast)
     std::string stdata = header + std::string((char*)&value, sizeof(uint32_t));
-    ;
 
     MDB_val tdata;
 
     tdata.mv_data = (char*)stdata.c_str();
     tdata.mv_size = stdata.size();
 
-    if ((rc = mdb_put(txn, dbi, &key, &tdata, 0)) != 0) {
+    if (mdb_put(txn, dbi, &key, &tdata, 0) != 0) {
       throw std::runtime_error("mdb_put failed");
     }
   }
@@ -597,7 +619,7 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     key.mv_data = (char*)keyname.c_str();
     key.mv_size = keyname.size();
 
-    if ((rc = mdb_get(txn, dbi, &key, &data))) {
+    if (mdb_get(txn, dbi, &key, &data) != 0) {
       throw std::runtime_error("mdb_get pdns.shards failed");
     }
 
@@ -610,20 +632,24 @@ bool LMDBBackend::upgradeToSchemav5(std::string& filename)
     tdata.mv_data = (char*)stdata.c_str();
     tdata.mv_size = stdata.size();
 
-    if ((rc = mdb_put(txn, dbi, &key, &tdata, 0)) != 0) {
+    if (mdb_put(txn, dbi, &key, &tdata, 0) != 0) {
       throw std::runtime_error("mdb_put failed");
     }
   }
 
   for (int i = 0; i < 4; i++) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     mdb_drop(txn, fromtypeddbi[i], 1);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     mdb_drop(txn, fromindexdbi[i], 1);
   }
 
   cerr << "txn commit=" << mdb_txn_commit(txn) << endl;
 
   for (int i = 0; i < 4; i++) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     mdb_dbi_close(env, totypeddbi[i]);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     mdb_dbi_close(env, toindexdbi[i]);
   }
   mdb_env_close(env);
@@ -651,8 +677,6 @@ LMDBBackend::LMDBBackend(const std::string& suffix)
     d_asyncFlag = MDB_NOSYNC;
   else if (syncMode == "nometasync")
     d_asyncFlag = MDB_NOMETASYNC;
-  else if (syncMode == "mapasync")
-    d_asyncFlag = MDB_MAPASYNC;
   else if (syncMode.empty() || syncMode == "sync")
     d_asyncFlag = 0;
   else
@@ -725,32 +749,47 @@ LMDBBackend::LMDBBackend(const std::string& suffix)
 
       auto txn = d_tdomains->getEnv()->getRWTransaction();
 
-      MDBOutVal shards;
-      if (!txn->get(pdnsdbi, "shards", shards)) {
+      const auto configShardsTemp = atoi(getArg("shards").c_str());
+      if (configShardsTemp < 0) {
+        throw std::runtime_error("a negative shards value is not supported");
+      }
+      if (configShardsTemp == 0) {
+        throw std::runtime_error("a shards value of 0 is not supported");
+      }
+      const auto configShards = static_cast<uint32_t>(configShardsTemp);
+
+      MDBOutVal shards{};
+      if (txn->get(pdnsdbi, "shards", shards) == 0) {
         s_shards = shards.get<uint32_t>();
 
         if (mustDo("lightning-stream") && s_shards != 1) {
-          throw std::runtime_error(std::string("running with Lightning Stream support enabled requires a database with exactly 1 shard"));
+          throw std::runtime_error("running with Lightning Stream support enabled requires a database with exactly 1 shard");
         }
 
-        if (s_shards != atoi(getArg("shards").c_str())) {
-          g_log << Logger::Warning << "Note: configured number of lmdb shards (" << atoi(getArg("shards").c_str()) << ") is different from on-disk (" << s_shards << "). Using on-disk shard number" << endl;
+        if (s_shards != configShards) {
+          g_log << Logger::Warning
+                << "Note: configured number of lmdb shards ("
+                << atoi(getArg("shards").c_str())
+                << ") is different from on-disk ("
+                << s_shards
+                << "). Using on-disk shard number"
+                << endl;
         }
       }
       else {
-        s_shards = atoi(getArg("shards").c_str());
+        s_shards = configShards;
         txn->put(pdnsdbi, "shards", s_shards);
       }
 
-      MDBOutVal gotuuid;
-      if (txn->get(pdnsdbi, "uuid", gotuuid)) {
+      MDBOutVal gotuuid{};
+      if (txn->get(pdnsdbi, "uuid", gotuuid) != 0) {
         const auto uuid = getUniqueID();
         const string uuids(uuid.begin(), uuid.end());
         txn->put(pdnsdbi, "uuid", uuids);
       }
 
-      MDBOutVal _schemaversion;
-      if (txn->get(pdnsdbi, "schemaversion", _schemaversion)) {
+      MDBOutVal _schemaversion{};
+      if (txn->get(pdnsdbi, "schemaversion", _schemaversion) != 0) {
         // our DB is entirely new, so we need to write the schemaversion
         txn->put(pdnsdbi, "schemaversion", currentSchemaVersion);
       }
@@ -819,7 +858,7 @@ namespace serialization
     ar& g.zone;
     ar& g.last_check;
     ar& g.account;
-    ar& g.masters;
+    ar& g.primaries;
     ar& g.id;
     ar& g.notified_serial;
     ar& g.kind;
@@ -833,7 +872,7 @@ namespace serialization
     ar& g.zone;
     ar& g.last_check;
     ar& g.account;
-    ar& g.masters;
+    ar& g.primaries;
     ar& g.id;
     ar& g.notified_serial;
     ar& g.kind;
@@ -889,32 +928,45 @@ BOOST_SERIALIZATION_SPLIT_FREE(DomainInfo);
 BOOST_IS_BITWISE_SERIALIZABLE(ComboAddress);
 
 template <>
-std::string serToString(const LMDBBackend::LMDBResourceRecord& lrr)
+std::string serializeToBuffer(const LMDBBackend::LMDBResourceRecord& value)
 {
-  std::string ret;
-  uint16_t len = lrr.content.length();
-  ret.reserve(2 + len + 7);
+  std::string buffer;
 
-  ret.assign((const char*)&len, 2);
-  ret += lrr.content;
-  ret.append((const char*)&lrr.ttl, 4);
-  ret.append(1, (char)lrr.auth);
-  ret.append(1, (char)lrr.disabled);
-  ret.append(1, (char)lrr.ordername);
-  return ret;
+  // Data size of the resource record.
+  uint16_t len = value.content.length();
+
+  // Reserve space to store the size of the resource record + the content of the resource
+  // record + a few other things.
+  buffer.reserve(sizeof(len) + len + sizeof(value.ttl) + sizeof(value.auth) + sizeof(value.disabled) + sizeof(value.ordername));
+
+  // Store the size of the resource record.
+  // NOLINTNEXTLINE.
+  buffer.assign((const char*)&len, sizeof(len));
+
+  // Store the contents of the resource record.
+  buffer += value.content;
+
+  // The few other things.
+  // NOLINTNEXTLINE.
+  buffer.append((const char*)&value.ttl, sizeof(value.ttl));
+  buffer.append(1, (char)value.auth);
+  buffer.append(1, (char)value.disabled);
+  buffer.append(1, (char)value.ordername);
+
+  return buffer;
 }
 
 template <>
-std::string serToString(const vector<LMDBBackend::LMDBResourceRecord>& lrrs)
+std::string serializeToBuffer(const vector<LMDBBackend::LMDBResourceRecord>& value)
 {
   std::string ret;
-  for (const auto& lrr : lrrs) {
-    ret += serToString(lrr);
+  for (const auto& lrr : value) {
+    ret += serializeToBuffer(lrr);
   }
   return ret;
 }
 
-static inline size_t serOneRRFromString(const string_view& str, LMDBBackend::LMDBResourceRecord& lrr)
+static inline size_t deserializeRRFromBuffer(const string_view& str, LMDBBackend::LMDBResourceRecord& lrr)
 {
   uint16_t len;
   memcpy(&len, &str[0], 2);
@@ -929,26 +981,26 @@ static inline size_t serOneRRFromString(const string_view& str, LMDBBackend::LMD
 }
 
 template <>
-void serFromString(const string_view& str, LMDBBackend::LMDBResourceRecord& lrr)
+void deserializeFromBuffer(const string_view& buffer, LMDBBackend::LMDBResourceRecord& value)
 {
-  serOneRRFromString(str, lrr);
+  deserializeRRFromBuffer(buffer, value);
 }
 
 template <>
-void serFromString(const string_view& str, vector<LMDBBackend::LMDBResourceRecord>& lrrs)
+void deserializeFromBuffer(const string_view& buffer, vector<LMDBBackend::LMDBResourceRecord>& value)
 {
-  auto str_copy = str;
+  auto str_copy = buffer;
   while (str_copy.size() >= 9) { // minimum length for a record is 10
     LMDBBackend::LMDBResourceRecord lrr;
-    auto rrLength = serOneRRFromString(str_copy, lrr);
-    lrrs.emplace_back(lrr);
+    auto rrLength = deserializeRRFromBuffer(str_copy, lrr);
+    value.emplace_back(lrr);
     str_copy.remove_prefix(rrLength);
   }
 }
 
 static std::string serializeContent(uint16_t qtype, const DNSName& domain, const std::string& content)
 {
-  auto drc = DNSRecordContent::mastermake(qtype, QClass::IN, content);
+  auto drc = DNSRecordContent::make(qtype, QClass::IN, content);
   return drc->serialize(domain, false);
 }
 
@@ -957,7 +1009,7 @@ static std::shared_ptr<DNSRecordContent> deserializeContentZR(uint16_t qtype, co
   if (qtype == QType::A && content.size() == 4) {
     return std::make_shared<ARecordContent>(*((uint32_t*)content.c_str()));
   }
-  return DNSRecordContent::deserialize(qname, qtype, content);
+  return DNSRecordContent::deserialize(qname, qtype, content, QClass::IN, true);
 }
 
 /* design. If you ask a question without a zone id, we lookup the best
@@ -1072,7 +1124,7 @@ bool LMDBBackend::feedRecord(const DNSResourceRecord& r, const DNSName& ordernam
     rrs = _rrs.get<string>();
   }
 
-  rrs += serToString(lrr);
+  rrs += serializeToBuffer(lrr);
 
   d_rwtxn->txn->put(d_rwtxn->db->dbi, matchName, rrs);
 
@@ -1082,12 +1134,12 @@ bool LMDBBackend::feedRecord(const DNSResourceRecord& r, const DNSName& ordernam
       lrr.ttl = 0;
       lrr.content = lrr.qname.toDNSStringLC();
       lrr.auth = 0;
-      string ser = serToString(lrr);
+      string ser = serializeToBuffer(lrr);
       d_rwtxn->txn->put(d_rwtxn->db->dbi, co(lrr.domain_id, ordername, QType::NSEC3), ser);
 
       lrr.ttl = 1;
       lrr.content = ordername.toDNSString();
-      ser = serToString(lrr);
+      ser = serializeToBuffer(lrr);
       d_rwtxn->txn->put(d_rwtxn->db->dbi, co(lrr.domain_id, lrr.qname, QType::NSEC3), ser);
     }
   }
@@ -1104,7 +1156,7 @@ bool LMDBBackend::feedEnts(int domain_id, map<DNSName, bool>& nonterm)
     lrr.auth = nt.second;
     lrr.ordername = true;
 
-    std::string ser = serToString(lrr);
+    std::string ser = serializeToBuffer(lrr);
     d_rwtxn->txn->put(d_rwtxn->db->dbi, co(domain_id, lrr.qname, QType::ENT), ser);
   }
   return true;
@@ -1121,21 +1173,21 @@ bool LMDBBackend::feedEnts3(int domain_id, const DNSName& domain, map<DNSName, b
     lrr.ttl = 0;
     lrr.auth = nt.second;
     lrr.ordername = nt.second;
-    ser = serToString(lrr);
+    ser = serializeToBuffer(lrr);
     d_rwtxn->txn->put(d_rwtxn->db->dbi, co(domain_id, lrr.qname, QType::ENT), ser);
 
     if (!narrow && lrr.auth) {
       lrr.content = lrr.qname.toDNSString();
       lrr.auth = false;
       lrr.ordername = false;
-      ser = serToString(lrr);
+      ser = serializeToBuffer(lrr);
 
       ordername = DNSName(toBase32Hex(hashQNameWithSalt(ns3prc, nt.first)));
       d_rwtxn->txn->put(d_rwtxn->db->dbi, co(domain_id, ordername, QType::NSEC3), ser);
 
       lrr.ttl = 1;
       lrr.content = ordername.toDNSString();
-      ser = serToString(lrr);
+      ser = serializeToBuffer(lrr);
       d_rwtxn->txn->put(d_rwtxn->db->dbi, co(domain_id, lrr.qname, QType::NSEC3), ser);
     }
   }
@@ -1180,7 +1232,7 @@ bool LMDBBackend::replaceRRSet(uint32_t domain_id, const DNSName& qname, const Q
 
       adjustedRRSet.emplace_back(lrr);
     }
-    txn->txn->put(txn->db->dbi, match, serToString(adjustedRRSet));
+    txn->txn->put(txn->db->dbi, match, serializeToBuffer(adjustedRRSet));
   }
 
   if (needCommit)
@@ -1211,7 +1263,7 @@ std::shared_ptr<LMDBBackend::RecordsRWTransaction> LMDBBackend::getRecordsRWTran
   return ret;
 }
 
-std::shared_ptr<LMDBBackend::RecordsROTransaction> LMDBBackend::getRecordsROTransaction(uint32_t id, std::shared_ptr<LMDBBackend::RecordsRWTransaction> rwtxn)
+std::shared_ptr<LMDBBackend::RecordsROTransaction> LMDBBackend::getRecordsROTransaction(uint32_t id, const std::shared_ptr<LMDBBackend::RecordsRWTransaction>& rwtxn)
 {
   auto& shard = d_trecords[id % s_shards];
   if (!shard.env) {
@@ -1311,7 +1363,7 @@ bool LMDBBackend::deleteDomain(const DNSName& domain)
 
   abortTransaction();
 
-  LMDBIDvec idvec;
+  LmdbIdVec idvec;
 
   if (!d_handle_dups) {
     // get domain id
@@ -1336,7 +1388,7 @@ bool LMDBBackend::deleteDomain(const DNSName& domain)
 
     { // Remove metadata
       auto txn = d_tmeta->getRWTransaction();
-      LMDBIDvec ids;
+      LmdbIdVec ids;
 
       txn.get_multi<0>(domain, ids);
 
@@ -1349,7 +1401,7 @@ bool LMDBBackend::deleteDomain(const DNSName& domain)
 
     { // Remove cryptokeys
       auto txn = d_tkdb->getRWTransaction();
-      LMDBIDvec ids;
+      LmdbIdVec ids;
       txn.get_multi<0>(domain, ids);
 
       for (auto _id : ids) {
@@ -1506,7 +1558,7 @@ bool LMDBBackend::get(DNSZoneRecord& zr)
         continue;
       }
 
-      serFromString(d_currentVal.get<string_view>(), d_currentrrset);
+      deserializeFromBuffer(d_currentVal.get<string_view>(), d_currentrrset);
       d_currentrrsetpos = 0;
     }
     else {
@@ -1572,7 +1624,7 @@ bool LMDBBackend::getSerial(DomainInfo& di)
   MDBOutVal val;
   if (!txn->txn->get(txn->db->dbi, co(di.id, g_rootdnsname, QType::SOA), val)) {
     LMDBResourceRecord lrr;
-    serFromString(val.get<string_view>(), lrr);
+    deserializeFromBuffer(val.get<string_view>(), lrr);
     if (lrr.content.size() >= 5 * sizeof(uint32_t)) {
       uint32_t serial;
       // a SOA has five 32 bit fields, the first of which is the serial
@@ -1616,7 +1668,7 @@ bool LMDBBackend::getDomainInfo(const DNSName& domain, DomainInfo& di, bool gets
   return true;
 }
 
-int LMDBBackend::genChangeDomain(const DNSName& domain, std::function<void(DomainInfo&)> func)
+int LMDBBackend::genChangeDomain(const DNSName& domain, const std::function<void(DomainInfo&)>& func)
 {
   auto txn = d_tdomains->getRWTransaction();
 
@@ -1630,7 +1682,7 @@ int LMDBBackend::genChangeDomain(const DNSName& domain, std::function<void(Domai
   return true;
 }
 
-int LMDBBackend::genChangeDomain(uint32_t id, std::function<void(DomainInfo&)> func)
+int LMDBBackend::genChangeDomain(uint32_t id, const std::function<void(DomainInfo&)>& func)
 {
   DomainInfo di;
 
@@ -1661,14 +1713,14 @@ bool LMDBBackend::setAccount(const DNSName& domain, const std::string& account)
   });
 }
 
-bool LMDBBackend::setMasters(const DNSName& domain, const vector<ComboAddress>& masters)
+bool LMDBBackend::setPrimaries(const DNSName& domain, const vector<ComboAddress>& primaries)
 {
-  return genChangeDomain(domain, [&masters](DomainInfo& di) {
-    di.masters = masters;
+  return genChangeDomain(domain, [&primaries](DomainInfo& di) {
+    di.primaries = primaries;
   });
 }
 
-bool LMDBBackend::createDomain(const DNSName& domain, const DomainInfo::DomainKind kind, const vector<ComboAddress>& masters, const string& account)
+bool LMDBBackend::createDomain(const DNSName& domain, const DomainInfo::DomainKind kind, const vector<ComboAddress>& primaries, const string& account)
 {
   DomainInfo di;
 
@@ -1680,7 +1732,7 @@ bool LMDBBackend::createDomain(const DNSName& domain, const DomainInfo::DomainKi
 
     di.zone = domain;
     di.kind = kind;
-    di.masters = masters;
+    di.primaries = primaries;
     di.account = account;
 
     txn.put(di, 0, d_random_ids);
@@ -1754,7 +1806,7 @@ void LMDBBackend::getAllDomains(vector<DomainInfo>* domains, bool /* doSerial */
   });
 }
 
-void LMDBBackend::getUnfreshSlaveInfos(vector<DomainInfo>* domains)
+void LMDBBackend::getUnfreshSecondaryInfos(vector<DomainInfo>* domains)
 {
   uint32_t serial;
   time_t now = time(0);
@@ -1770,7 +1822,7 @@ void LMDBBackend::getUnfreshSlaveInfos(vector<DomainInfo>* domains)
     compoundOrdername co;
     MDBOutVal val;
     if (!txn2->txn->get(txn2->db->dbi, co(di.id, g_rootdnsname, QType::SOA), val)) {
-      serFromString(val.get<string_view>(), lrr);
+      deserializeFromBuffer(val.get<string_view>(), lrr);
       memcpy(&st, &lrr.content[lrr.content.size() - sizeof(soatimes)], sizeof(soatimes));
       if ((time_t)(di.last_check + ntohl(st.refresh)) > now) { // still fresh
         return false;
@@ -1799,7 +1851,7 @@ void LMDBBackend::setFresh(uint32_t domain_id)
   });
 }
 
-void LMDBBackend::getUpdatedMasters(vector<DomainInfo>& updatedDomains, std::unordered_set<DNSName>& catalogs, CatalogHashMap& catalogHashes)
+void LMDBBackend::getUpdatedPrimaries(vector<DomainInfo>& updatedDomains, std::unordered_set<DNSName>& catalogs, CatalogHashMap& catalogHashes)
 {
   CatalogInfo ci;
 
@@ -1848,14 +1900,14 @@ bool LMDBBackend::getCatalogMembers(const DNSName& catalog, vector<CatalogInfo>&
 
   try {
     getAllDomainsFiltered(&scratch, [&catalog, &members, &type](DomainInfo& di) {
-      if ((type == CatalogInfo::CatalogType::Producer && di.kind != DomainInfo::Master) || (type == CatalogInfo::CatalogType::Consumer && di.kind != DomainInfo::Slave) || di.catalog != catalog) {
+      if ((type == CatalogInfo::CatalogType::Producer && di.kind != DomainInfo::Primary) || (type == CatalogInfo::CatalogType::Consumer && di.kind != DomainInfo::Secondary) || di.catalog != catalog) {
         return false;
       }
 
       CatalogInfo ci;
       ci.d_id = di.id;
       ci.d_zone = di.zone;
-      ci.d_primaries = di.masters;
+      ci.d_primaries = di.primaries;
       try {
         ci.fromJson(di.options, type);
       }
@@ -1893,7 +1945,7 @@ bool LMDBBackend::getAllDomainMetadata(const DNSName& name, std::map<std::string
 {
   meta.clear();
   auto txn = d_tmeta->getROTransaction();
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   DomainMeta dm;
@@ -1910,7 +1962,7 @@ bool LMDBBackend::setDomainMetadata(const DNSName& name, const std::string& kind
 {
   auto txn = d_tmeta->getRWTransaction();
 
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   DomainMeta dmeta;
@@ -1934,7 +1986,7 @@ bool LMDBBackend::setDomainMetadata(const DNSName& name, const std::string& kind
 bool LMDBBackend::getDomainKeys(const DNSName& name, std::vector<KeyData>& keys)
 {
   auto txn = d_tkdb->getROTransaction();
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   KeyDataDB key;
@@ -2071,13 +2123,13 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
 
     for (;;) {
       if (co.getDomainID(key.getNoStripHeader<StringView>()) != id) {
-        //cout<<"Last record also not part of this zone!"<<endl;
-        // this implies something is wrong in the database, nothing we can do
+        // cout<<"Last record also not part of this zone!"<<endl;
+        //  this implies something is wrong in the database, nothing we can do
         return false;
       }
 
       if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-        serFromString(val.get<StringView>(), lrr);
+        deserializeFromBuffer(val.get<StringView>(), lrr);
         if (!lrr.ttl) // the kind of NSEC3 we need
           break;
       }
@@ -2096,7 +2148,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
     }
     for (;;) {
       if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-        serFromString(val.get<StringView>(), lrr);
+        deserializeFromBuffer(val.get<StringView>(), lrr);
         if (!lrr.ttl)
           break;
       }
@@ -2127,7 +2179,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
       }
       for (;;) {
         if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-          serFromString(val.get<StringView>(), lrr);
+          deserializeFromBuffer(val.get<StringView>(), lrr);
           if (!lrr.ttl)
             break;
         }
@@ -2150,7 +2202,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
         // cout<<"Potentially stopping traverse at "<< co.getQName(key.get<StringView>()) <<", " << (co.getQName(key.get<StringView>()).canonCompare(qname))<<endl;
         // cout<<"qname = "<<qname<<endl;
         // cout<<"here  = "<<co.getQName(key.get<StringView>())<<endl;
-        serFromString(val.get<StringView>(), lrr);
+        deserializeFromBuffer(val.get<StringView>(), lrr);
         if (!lrr.ttl)
           break;
       }
@@ -2169,13 +2221,13 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
 
         for (;;) {
           if (co.getDomainID(key.getNoStripHeader<StringView>()) != id) {
-            //cout<<"Last record also not part of this zone!"<<endl;
-            // this implies something is wrong in the database, nothing we can do
+            // cout<<"Last record also not part of this zone!"<<endl;
+            //  this implies something is wrong in the database, nothing we can do
             return false;
           }
 
           if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-            serFromString(val.get<StringView>(), lrr);
+            deserializeFromBuffer(val.get<StringView>(), lrr);
             if (!lrr.ttl) // the kind of NSEC3 we need
               break;
           }
@@ -2196,7 +2248,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
         }
         for (;;) {
           if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-            serFromString(val.get<StringView>(), lrr);
+            deserializeFromBuffer(val.get<StringView>(), lrr);
             if (!lrr.ttl)
               break;
           }
@@ -2232,7 +2284,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
       }
       for (;;) {
         if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-          serFromString(val.get<StringView>(), lrr);
+          deserializeFromBuffer(val.get<StringView>(), lrr);
           if (!lrr.ttl)
             break;
         }
@@ -2252,7 +2304,7 @@ bool LMDBBackend::getBeforeAndAfterNamesAbsolute(uint32_t id, const DNSName& qna
 
     // cout<<"After "<<co.getQName(key.get<StringView>()) <<endl;
     if (co.getQType(key.getNoStripHeader<StringView>()) == QType::NSEC3) {
-      serFromString(val.get<StringView>(), lrr);
+      deserializeFromBuffer(val.get<StringView>(), lrr);
       if (!lrr.ttl) {
         break;
       }
@@ -2300,7 +2352,7 @@ bool LMDBBackend::getBeforeAndAfterNames(uint32_t id, const DNSName& zonenameU, 
       if (co.getDomainID(key.getNoStripHeader<string_view>()) == id && key.getNoStripHeader<StringView>().rfind(matchkey, 0) == 0)
         continue;
       LMDBResourceRecord lrr;
-      serFromString(val.get<StringView>(), lrr);
+      deserializeFromBuffer(val.get<StringView>(), lrr);
       if (co.getQType(key.getNoStripHeader<string_view>()).getCode() && (lrr.auth || co.getQType(key.getNoStripHeader<string_view>()).getCode() == QType::NS))
         break;
     }
@@ -2331,7 +2383,7 @@ bool LMDBBackend::getBeforeAndAfterNames(uint32_t id, const DNSName& zonenameU, 
         return false;
       }
       LMDBResourceRecord lrr;
-      serFromString(val.get<StringView>(), lrr);
+      deserializeFromBuffer(val.get<StringView>(), lrr);
       if (co.getQType(key.getNoStripHeader<string_view>()).getCode() && (lrr.auth || co.getQType(key.getNoStripHeader<string_view>()).getCode() == QType::NS))
         break;
     }
@@ -2346,7 +2398,7 @@ bool LMDBBackend::getBeforeAndAfterNames(uint32_t id, const DNSName& zonenameU, 
   int skips = 0;
   for (;;) {
     LMDBResourceRecord lrr;
-    serFromString(val.get<StringView>(), lrr);
+    deserializeFromBuffer(val.get<StringView>(), lrr);
     if (co.getQType(key.getNoStripHeader<string_view>()).getCode() && (lrr.auth || co.getQType(key.getNoStripHeader<string_view>()).getCode() == QType::NS)) {
       after = co.getQName(key.getNoStripHeader<string_view>()) + zonename;
       // cout <<"Found auth ("<<lrr.auth<<") or an NS record "<<after<<", type: "<<co.getQType(key.getNoStripHeader<string_view>()).toString()<<", ttl = "<<lrr.ttl<<endl;
@@ -2376,7 +2428,7 @@ bool LMDBBackend::getBeforeAndAfterNames(uint32_t id, const DNSName& zonenameU, 
     }
     before = co.getQName(key.getNoStripHeader<string_view>()) + zonename;
     LMDBResourceRecord lrr;
-    serFromString(val.get<string_view>(), lrr);
+    deserializeFromBuffer(val.get<string_view>(), lrr);
     // cout<<"And before to "<<before<<", auth = "<<rr.auth<<endl;
     if (co.getQType(key.getNoStripHeader<string_view>()).getCode() && (lrr.auth || co.getQType(key.getNoStripHeader<string_view>()) == QType::NS))
       break;
@@ -2426,7 +2478,7 @@ bool LMDBBackend::updateDNSSECOrderNameAndAuth(uint32_t domain_id, const DNSName
     vector<LMDBResourceRecord> lrrs;
 
     if (co.getQType(key.getNoStripHeader<StringView>()) != QType::NSEC3) {
-      serFromString(val.get<StringView>(), lrrs);
+      deserializeFromBuffer(val.get<StringView>(), lrrs);
       bool changed = false;
       vector<LMDBResourceRecord> newRRs;
       for (auto& lrr : lrrs) {
@@ -2443,7 +2495,7 @@ bool LMDBBackend::updateDNSSECOrderNameAndAuth(uint32_t domain_id, const DNSName
         newRRs.push_back(std::move(lrr));
       }
       if (changed) {
-        cursor.put(key, serToString(newRRs));
+        cursor.put(key, serializeToBuffer(newRRs));
       }
     }
 
@@ -2457,7 +2509,7 @@ bool LMDBBackend::updateDNSSECOrderNameAndAuth(uint32_t domain_id, const DNSName
   // cerr<<"here qname="<<qname<<" ordername="<<ordername<<" qtype="<<qtype<<" matchkey="<<makeHexDump(matchkey)<<endl;
   int txngetrc;
   if (!(txngetrc = txn->txn->get(txn->db->dbi, matchkey, val))) {
-    serFromString(val.get<string_view>(), lrr);
+    deserializeFromBuffer(val.get<string_view>(), lrr);
 
     if (needNSEC3) {
       if (hasOrderName && lrr.content != ordername.toDNSStringLC()) {
@@ -2483,11 +2535,11 @@ bool LMDBBackend::updateDNSSECOrderNameAndAuth(uint32_t domain_id, const DNSName
     lrr.auth = 0;
     lrr.content = rel.toDNSStringLC();
 
-    string str = serToString(lrr);
+    string str = serializeToBuffer(lrr);
     txn->txn->put(txn->db->dbi, co(domain_id, ordername, QType::NSEC3), str);
     lrr.ttl = 1;
     lrr.content = ordername.toDNSStringLC();
-    str = serToString(lrr);
+    str = serializeToBuffer(lrr);
     txn->txn->put(txn->db->dbi, matchkey, str); // 2
   }
 
@@ -2530,7 +2582,7 @@ bool LMDBBackend::updateEmptyNonTerminals(uint32_t domain_id, set<DNSName>& inse
       lrr.ttl = 0;
       lrr.auth = true;
 
-      std::string ser = serToString(lrr);
+      std::string ser = serializeToBuffer(lrr);
 
       txn->txn->put(txn->db->dbi, co(domain_id, lrr.qname, 0), ser);
 
@@ -2551,7 +2603,7 @@ bool LMDBBackend::updateEmptyNonTerminals(uint32_t domain_id, set<DNSName>& inse
 bool LMDBBackend::getTSIGKey(const DNSName& name, DNSName& algorithm, string& content)
 {
   auto txn = d_ttsig->getROTransaction();
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   TSIGKey key;
@@ -2572,7 +2624,7 @@ bool LMDBBackend::setTSIGKey(const DNSName& name, const DNSName& algorithm, cons
 {
   auto txn = d_ttsig->getRWTransaction();
 
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   TSIGKey key;
@@ -2598,7 +2650,7 @@ bool LMDBBackend::deleteTSIGKey(const DNSName& name)
 {
   auto txn = d_ttsig->getRWTransaction();
 
-  LMDBIDvec ids;
+  LmdbIdVec ids;
   txn.get_multi<0>(name, ids);
 
   TSIGKey key;
@@ -2616,8 +2668,34 @@ bool LMDBBackend::getTSIGKeys(std::vector<struct TSIGKey>& keys)
   auto txn = d_ttsig->getROTransaction();
 
   keys.clear();
-  for (auto iter = txn.begin(); iter != txn.end(); ++iter) {
-    keys.push_back(*iter);
+  // In a perfect world, we would simply iterate over txn and add every
+  // item to the returned vector:
+  //   for (auto iter = txn.begin(); iter != txn.end(); ++iter) {
+  //     keys.push_back(*iter);
+  //   }
+  // But databases converted from older (< 5) schemas _may_ have multiple
+  // entries for the same TSIG key name and algorithm, something which is not
+  // allowed in the v5 database schema. These extra entries will not be found
+  // by get_multi<> during regular operations, and would only appear in the
+  // results of this method.
+  // In order to prevent this, we first only gather the list of key names, and
+  // in a second step, query for them using a similar logic as getTSIGKey().
+  // Unfortunately, there does not seem to be a way to know if the database had
+  // been created using the v5 schema (not converted), in which case we could
+  // use the above, simpler logic.
+  std::unordered_set<DNSName> keynames;
+  for (const auto& iter : txn) {
+    keynames.insert(iter.name);
+  }
+  for (const auto& iter : keynames) {
+    LmdbIdVec ids;
+    txn.get_multi<0>(iter, ids);
+    for (auto key_id : ids) {
+      TSIGKey key;
+      if (txn.get(key_id, key)) {
+        keys.push_back(key);
+      }
+    }
   }
   return true;
 }
@@ -2682,7 +2760,7 @@ string LMDBBackend::directBackendCmd(const string& query)
 
           auto id = iter.getID();
 
-          LMDBIDvec ids;
+          LmdbIdVec ids;
           txn.get_multi<0>(di.zone, ids);
 
           if (ids.size() != 1) {
@@ -2761,7 +2839,7 @@ public:
   void declareArguments(const string& suffix = "") override
   {
     declare(suffix, "filename", "Filename for lmdb", "./pdns.lmdb");
-    declare(suffix, "sync-mode", "Synchronisation mode: nosync, nometasync, mapasync, sync", "mapasync");
+    declare(suffix, "sync-mode", "Synchronisation mode: nosync, nometasync, sync", "sync");
     // there just is no room for more on 32 bit
     declare(suffix, "shards", "Records database will be split into this number of shards", (sizeof(void*) == 4) ? "2" : "64");
     declare(suffix, "schema-version", "Maximum allowed schema version to run on this DB. If a lower version is found, auto update is performed", std::to_string(SCHEMAVERSION));
@@ -2783,7 +2861,7 @@ class LMDBLoader
 public:
   LMDBLoader()
   {
-    BackendMakers().report(new LMDBFactory);
+    BackendMakers().report(std::make_unique<LMDBFactory>());
     g_log << Logger::Info << "[lmdbbackend] This is the lmdb backend version " VERSION
 #ifndef REPRODUCIBLE
           << " (" __DATE__ " " __TIME__ ")"

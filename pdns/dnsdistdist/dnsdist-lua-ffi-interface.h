@@ -60,6 +60,7 @@ typedef enum {
 
 void dnsdist_ffi_dnsquestion_get_localaddr(const dnsdist_ffi_dnsquestion_t* dq, const void** addr, size_t* addrSize) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_dnsquestion_get_local_port(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_dnsquestion_is_remote_v6(const dnsdist_ffi_dnsquestion_t* dnsQuestion) __attribute__ ((visibility ("default")));
 void dnsdist_ffi_dnsquestion_get_remoteaddr(const dnsdist_ffi_dnsquestion_t* dq, const void** addr, size_t* addrSize) __attribute__ ((visibility ("default")));
 void dnsdist_ffi_dnsquestion_get_masked_remoteaddr(dnsdist_ffi_dnsquestion_t* dq, const void** addr, size_t* addrSize, uint8_t bits) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_dnsquestion_get_remote_port(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
@@ -78,12 +79,13 @@ bool dnsdist_ffi_dnsquestion_get_tcp(const dnsdist_ffi_dnsquestion_t* dq) __attr
 dnsdist_ffi_protocol_type dnsdist_ffi_dnsquestion_get_protocol(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 bool dnsdist_ffi_dnsquestion_get_skip_cache(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 bool dnsdist_ffi_dnsquestion_get_use_ecs(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
-bool dnsdist_ffi_dnsquestion_get_add_xpf(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 bool dnsdist_ffi_dnsquestion_get_ecs_override(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_dnsquestion_get_ecs_prefix_length(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 bool dnsdist_ffi_dnsquestion_is_temp_failure_ttl_set(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
 uint32_t dnsdist_ffi_dnsquestion_get_temp_failure_ttl(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
-bool dnsdist_ffi_dnsquestion_get_do(const dnsdist_ffi_dnsquestion_t* dq) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_dnsquestion_get_do(const dnsdist_ffi_dnsquestion_t* dnsQuestion) __attribute__ ((visibility ("default")));
+uint8_t dnsdist_ffi_dnsquestion_get_edns_version(const dnsdist_ffi_dnsquestion_t* dnsQuestion) __attribute__ ((visibility ("default")));
+uint8_t dnsdist_ffi_dnsquestion_get_edns_extended_rcode(const dnsdist_ffi_dnsquestion_t* dnsQuestion) __attribute__ ((visibility ("default")));
 void dnsdist_ffi_dnsquestion_get_sni(const dnsdist_ffi_dnsquestion_t* dq, const char** sni, size_t* sniSize) __attribute__ ((visibility ("default")));
 const char* dnsdist_ffi_dnsquestion_get_tag(const dnsdist_ffi_dnsquestion_t* dq, const char* label) __attribute__ ((visibility ("default")));
 size_t dnsdist_ffi_dnsquestion_get_tag_raw(const dnsdist_ffi_dnsquestion_t* dq, const char* label, char* buffer, size_t bufferSize) __attribute__ ((visibility ("default")));
@@ -116,6 +118,8 @@ void dnsdist_ffi_dnsquestion_set_device_id(dnsdist_ffi_dnsquestion_t* dq, const 
 void dnsdist_ffi_dnsquestion_set_device_name(dnsdist_ffi_dnsquestion_t* dq, const char* value, size_t valueSize) __attribute__ ((visibility ("default")));
 
 void dnsdist_ffi_dnsquestion_set_http_response(dnsdist_ffi_dnsquestion_t* dq, uint16_t statusCode, const char* body, size_t bodyLen, const char* contentType) __attribute__ ((visibility ("default")));
+
+void dnsdist_ffi_dnsquestion_set_extended_dns_error(dnsdist_ffi_dnsquestion_t* dnsQuestion, uint16_t infoCode, const char* extraText, size_t extraTextSize) __attribute__ ((visibility ("default")));
 
 size_t dnsdist_ffi_dnsquestion_get_trailing_data(dnsdist_ffi_dnsquestion_t* dq, const char** out) __attribute__ ((visibility ("default")));
 
@@ -175,6 +179,9 @@ typedef struct dnsdist_ffi_proxy_protocol_value {
 
 size_t dnsdist_ffi_generate_proxy_protocol_payload(size_t addrSize, const void* srcAddr, const void* dstAddr, uint16_t srcPort, uint16_t dstPort, bool tcp, size_t valuesCount, const dnsdist_ffi_proxy_protocol_value_t* values, void* out, size_t outSize) __attribute__ ((visibility ("default")));
 size_t dnsdist_ffi_dnsquestion_generate_proxy_protocol_payload(const dnsdist_ffi_dnsquestion_t* dq, const size_t valuesCount, const dnsdist_ffi_proxy_protocol_value_t* values, void* out, const size_t outSize) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_dnsquestion_add_proxy_protocol_values(dnsdist_ffi_dnsquestion_t* dnsQuestion, const size_t valuesCount, const dnsdist_ffi_proxy_protocol_value_t* values) __attribute__ ((visibility ("default")));
+// returns the length of the resulting 'out' array. 'out' is not set if the length is 0. Note that the return value will get invalidated as soon as a new value is added via dnsdist_ffi_dnsquestion_add_proxy_protocol_values().
+size_t dnsdist_ffi_dnsquestion_get_proxy_protocol_values(dnsdist_ffi_dnsquestion_t* dnsQuestion, const dnsdist_ffi_proxy_protocol_value_t** out) __attribute__((visibility("default")));
 
 typedef struct dnsdist_ffi_domain_list_t dnsdist_ffi_domain_list_t;
 typedef struct dnsdist_ffi_address_list_t dnsdist_ffi_address_list_t;
@@ -191,11 +198,22 @@ size_t dnsdist_ffi_packetcache_get_address_list_by_domain(const char* poolName, 
 typedef struct dnsdist_ffi_ring_entry_list_t dnsdist_ffi_ring_entry_list_t;
 
 bool dnsdist_ffi_ring_entry_is_response(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+double dnsdist_ffi_ring_entry_get_age(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 const char* dnsdist_ffi_ring_entry_get_name(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_ring_entry_get_type(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 const char* dnsdist_ffi_ring_entry_get_requestor(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+const char* dnsdist_ffi_ring_entry_get_backend(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 uint8_t dnsdist_ffi_ring_entry_get_protocol(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_ring_entry_get_size(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint16_t dnsdist_ffi_ring_entry_get_latency(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint16_t dnsdist_ffi_ring_entry_get_id(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint8_t dnsdist_ffi_ring_entry_get_rcode(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_ring_entry_get_aa(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_ring_entry_get_rd(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_ring_entry_get_tc(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint16_t dnsdist_ffi_ring_entry_get_ancount(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint16_t dnsdist_ffi_ring_entry_get_nscount(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+uint16_t dnsdist_ffi_ring_entry_get_arcount(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 bool dnsdist_ffi_ring_entry_has_mac_address(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 const char* dnsdist_ffi_ring_entry_get_mac_address(const dnsdist_ffi_ring_entry_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
 
@@ -241,3 +259,47 @@ const char* dnsdist_ffi_network_message_get_payload(const dnsdist_ffi_network_me
 size_t dnsdist_ffi_network_message_get_payload_size(const dnsdist_ffi_network_message_t* msg) __attribute__ ((visibility ("default")));
 uint16_t dnsdist_ffi_network_message_get_endpoint_id(const dnsdist_ffi_network_message_t* msg) __attribute__ ((visibility ("default")));
 
+/* Add a dynamic block:
+   - address should be an IPv4 or IPv6 address, as a string (192.0.2.1). A port might be included (192.0.2.1:).
+   - reason is a description of why the block was inserted
+   - action should be a DNSAction
+   - duration is the duration of the block, in seconds
+   - clientIPMask indicates whether the exact IP address should be blocked (32 for IPv4, 128 for IPv6) or if a range should be used instead, by indicating the number of bits of the address to consider
+   - clientIPPort indicates It is also possible to take the IPv4 UDP and TCP ports into account, for CGNAT deployments, by setting the number of bits of the port to consider. For example passing 2 as the last parameter, which only makes sense if the previous parameters are respectively 32 and 128, will split a given IP address into four port ranges: 0-16383, 16384-32767, 32768-49151 and 49152-65535
+   - tagKey is the name of the tag set if the action is SetTag
+   - tagValue is the value of the tag set if the action is SetTag
+*/
+bool dnsdist_ffi_dynamic_blocks_add(const char* address, const char* message, uint8_t action, unsigned int duration, uint8_t clientIPMask, uint8_t clientIPPortMask, const char* tagKey, const char* tagValue) __attribute__ ((visibility ("default")));
+bool dnsdist_ffi_dynamic_blocks_smt_add(const char* suffix, const char* message, uint8_t action, unsigned int duration, const char* tagKey, const char* tagValue) __attribute__ ((visibility ("default")));
+
+typedef struct dnsdist_ffi_dynamic_block_entry {
+  char* key; /* Client IP for NMT blocks, domain name for SMT ones */
+  char* reason;
+  uint64_t blockedQueries;
+  uint64_t remainingTime;
+  uint8_t action;
+  bool ebpf;
+  bool warning;
+} dnsdist_ffi_dynamic_block_entry_t;
+
+typedef struct dnsdist_ffi_dynamic_blocks_list_t dnsdist_ffi_dynamic_blocks_list_t;
+
+size_t dnsdist_ffi_dynamic_blocks_get_entries(dnsdist_ffi_dynamic_blocks_list_t** out) __attribute__ ((visibility ("default")));
+size_t dnsdist_ffi_dynamic_blocks_smt_get_entries(dnsdist_ffi_dynamic_blocks_list_t** out) __attribute__ ((visibility ("default")));
+const dnsdist_ffi_dynamic_block_entry_t* dnsdist_ffi_dynamic_blocks_list_get(const dnsdist_ffi_dynamic_blocks_list_t* list, size_t idx) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_dynamic_blocks_list_free(dnsdist_ffi_dynamic_blocks_list_t*) __attribute__ ((visibility ("default")));
+
+uint32_t dnsdist_ffi_hash(uint32_t seed, const unsigned char* data, size_t dataSize, bool caseInsensitive) __attribute__ ((visibility ("default")));
+
+typedef struct dnsdist_ffi_svc_record_parameters dnsdist_ffi_svc_record_parameters;
+bool dnsdist_ffi_svc_record_parameters_new(const char* targetName, uint16_t priority, bool noDefaultALPN, dnsdist_ffi_svc_record_parameters** out) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_set_port(dnsdist_ffi_svc_record_parameters* parameters, uint16_t port) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_set_ech(dnsdist_ffi_svc_record_parameters* parameters, const char* ech, size_t echLen) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_set_additional_param(dnsdist_ffi_svc_record_parameters* parameters, uint16_t key, const char* value, size_t valueLen) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_add_mandatory_param(dnsdist_ffi_svc_record_parameters* parameters, uint16_t key) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_add_alpn(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_add_ipv4_hint(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_add_ipv6_hint(dnsdist_ffi_svc_record_parameters* parameters, const char* value, size_t valueLen) __attribute__ ((visibility ("default")));
+void dnsdist_ffi_svc_record_parameters_free(dnsdist_ffi_svc_record_parameters* parameters) __attribute__ ((visibility ("default")));
+
+bool dnsdist_ffi_dnsquestion_generate_svc_response(dnsdist_ffi_dnsquestion_t* dnsQuestion, const dnsdist_ffi_svc_record_parameters** parametersList, size_t parametersListSize, uint32_t ttl) __attribute__ ((visibility ("default")));
