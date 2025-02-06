@@ -21,13 +21,13 @@ The DNSQuestion object contains at least the following fields:
 
       .. versionadded:: 4.5.0
 
-      The current extended error code, if any. See :ref:`setting-extended-resolution-errors`.
+      The extended error code, if any. See :ref:`setting-extended-resolution-errors`.
 
   .. attribute:: DNSQuestion.extendedErrorExtra
 
       .. versionadded:: 4.5.0
 
-      The current extended error extra text, as a string, if any. See :ref:`setting-extended-resolution-errors`.
+      The extended error extra text, as a string, if any. See :ref:`setting-extended-resolution-errors`.
 
   .. attribute:: DNSQuestion.qname
 
@@ -50,10 +50,20 @@ The DNSQuestion object contains at least the following fields:
   .. attribute:: DNSQuestion.remoteaddr
 
       :class:`ComboAddress` of the requestor.
+      If the proxy protocol is used, this will contain the source address from the proxy protocol header.
 
   .. attribute:: DNSQuestion.localaddr
 
       :class:`ComboAddress` where this query was received on.
+      If the proxy protocol is used, this will contain the destination address from the proxy protocol header.
+
+  .. attribute:: DNSQuestion.interface_remoteaddr
+
+      Source :class:`ComboAddress` of the packet received by the recursor. If the proxy protocol is not used, the value will match ``remoteaddr``.
+
+  .. attribute:: DNSQuestion.interface_localaddr
+
+      Destination :class:`ComboAddress` of the packet received by the recursor. If the proxy protocol is not used, the value will match ``localaddr``.
 
   .. attribute:: DNSQuestion.variable
 
@@ -221,7 +231,8 @@ The DNSQuestion object contains at least the following fields:
 
   .. attribute:: DNSQuestion.tag
 
-      The packet-cache tag set via :func:`gettag`, or 0 if it has not been set.
+      The packetcache tag set via :func:`gettag` or :func:`gettag_ffi`.
+      Default tag is zero. Internally to the recursor, the tag is interpreted as an unsigned 32-bit integer.
 
   .. attribute:: DNSQuestion.queryTime
 

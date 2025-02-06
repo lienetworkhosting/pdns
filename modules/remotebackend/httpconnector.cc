@@ -95,14 +95,12 @@ std::string HTTPConnector::buildMemberListArgs(const std::string& prefix, const 
   std::stringstream stream;
 
   for (const auto& pair : args.object_items()) {
+    stream << prefix << "[" << YaHTTP::Utility::encodeURL(pair.first, false) << "]=";
     if (pair.second.is_bool()) {
       stream << (pair.second.bool_value() ? "1" : "0");
     }
-    else if (pair.second.is_null()) {
-      stream << prefix << "[" << YaHTTP::Utility::encodeURL(pair.first, false) << "]=";
-    }
-    else {
-      stream << prefix << "[" << YaHTTP::Utility::encodeURL(pair.first, false) << "]=" << YaHTTP::Utility::encodeURL(HTTPConnector::asString(pair.second), false);
+    else if (!pair.second.is_null()) {
+      stream << YaHTTP::Utility::encodeURL(HTTPConnector::asString(pair.second), false);
     }
     stream << "&";
   }
@@ -183,9 +181,9 @@ void HTTPConnector::restful_requestbuilder(const std::string& method, const Json
   else if (method == "replaceRRSet") {
     std::stringstream ss2;
     for (size_t index = 0; index < parameters["rrset"].array_items().size(); index++) {
-      ss2 << buildMemberListArgs("rrset[" + std::to_string(index) + "]", parameters["rrset"][index]);
+      ss2 << buildMemberListArgs("rrset[" + std::to_string(index) + "]", parameters["rrset"][index]) << "&";
     }
-    req.body = ss2.str();
+    req.body = ss2.str().substr(0, ss2.str().size() - 1); // remove trailing &
     req.headers["content-type"] = "application/x-www-form-urlencoded; charset=utf-8";
     req.headers["content-length"] = std::to_string(req.body.size());
     verb = "PATCH";
@@ -257,7 +255,7 @@ void HTTPConnector::restful_requestbuilder(const std::string& method, const Json
     verb = "DELETE";
   }
   else if (method == "setNotified") {
-    req.POST()["serial"] = std::to_string(parameters["serial"].number_value());
+    req.POST()["serial"] = asString(parameters["serial"]);
     req.preparePost();
     verb = "PATCH";
   }
@@ -433,23 +431,19 @@ int HTTPConnector::recv_message(Json& output)
   if (d_socket == nullptr) {
     return -1; // cannot receive :(
   }
-  char buffer[4096];
-  int rd = -1;
-  time_t t0 = 0;
+  std::array<char, 4096> buffer{};
+  time_t time0 = 0;
 
   arl.initialize(&resp);
 
   try {
-    t0 = time((time_t*)nullptr);
-    while (!arl.ready() && (labs(time((time_t*)nullptr) - t0) <= timeout)) {
-      rd = d_socket->readWithTimeout(buffer, sizeof(buffer), timeout);
-      if (rd == 0) {
+    time0 = time(nullptr);
+    while (!arl.ready() && (labs(time(nullptr) - time0) <= timeout)) {
+      auto readBytes = d_socket->readWithTimeout(buffer.data(), buffer.size(), timeout);
+      if (readBytes == 0) {
         throw NetworkError("EOF while reading");
       }
-      if (rd < 0) {
-        throw NetworkError(std::string(strerror(rd)));
-      }
-      arl.feed(std::string(buffer, rd));
+      arl.feed(std::string(buffer.data(), readBytes));
     }
     // timeout occurred.
     if (!arl.ready()) {
@@ -472,13 +466,12 @@ int HTTPConnector::recv_message(Json& output)
     throw PDNSException("Received unacceptable HTTP status code " + std::to_string(resp.status) + " from HTTP endpoint " + d_addr.toStringWithPort());
   }
 
-  int rv = -1;
   std::string err;
   output = Json::parse(resp.body, err);
   if (output != nullptr) {
-    return resp.body.size();
+    return static_cast<int>(resp.body.size());
   }
   g_log << Logger::Error << "Cannot parse JSON reply: " << err << endl;
 
-  return rv;
+  return -1;
 }

@@ -19,6 +19,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#include <limits>
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -161,7 +162,7 @@ int RemoteBackend::build()
       key = opt.substr(0, pos);
       val = opt.substr(pos + 1);
     }
-    options[key] = val;
+    options[key] = std::move(val);
   }
 
   // connectors know what they are doing
@@ -591,8 +592,8 @@ void RemoteBackend::parseDomainInfo(const Json& obj, DomainInfo& di)
 {
   di.id = intFromJson(obj, "id", -1);
   di.zone = DNSName(stringFromJson(obj, "zone"));
-  for (const auto& master : obj["masters"].array_items()) {
-    di.masters.emplace_back(master.string_value(), 53);
+  for (const auto& primary : obj["masters"].array_items()) {
+    di.primaries.emplace_back(primary.string_value(), 53);
   }
 
   di.notified_serial = static_cast<unsigned int>(doubleFromJson(obj, "notified_serial", 0));
@@ -604,10 +605,10 @@ void RemoteBackend::parseDomainInfo(const Json& obj, DomainInfo& di)
     kind = stringFromJson(obj, "kind");
   }
   if (kind == "master") {
-    di.kind = DomainInfo::Master;
+    di.kind = DomainInfo::Primary;
   }
   else if (kind == "slave") {
-    di.kind = DomainInfo::Slave;
+    di.kind = DomainInfo::Secondary;
   }
   else {
     di.kind = DomainInfo::Native;
@@ -646,7 +647,7 @@ void RemoteBackend::setNotified(uint32_t id, uint32_t serial)
   }
 }
 
-bool RemoteBackend::superMasterBackend(const string& ip, const DNSName& domain, const vector<DNSResourceRecord>& nsset, string* nameserver, string* account, DNSBackend** ddb)
+bool RemoteBackend::autoPrimaryBackend(const string& ip, const DNSName& domain, const vector<DNSResourceRecord>& nsset, string* nameserver, string* account, DNSBackend** ddb)
 {
   Json::array rrset;
 
@@ -683,7 +684,7 @@ bool RemoteBackend::superMasterBackend(const string& ip, const DNSName& domain, 
   return true;
 }
 
-bool RemoteBackend::createSlaveDomain(const string& ip, const DNSName& domain, const string& nameserver, const string& account)
+bool RemoteBackend::createSecondaryDomain(const string& ip, const DNSName& domain, const string& nameserver, const string& account)
 {
   Json query = Json::object{
     {"method", "createSlaveDomain"},
@@ -830,11 +831,16 @@ string RemoteBackend::directBackendCmd(const string& querystr)
   return asString(answer["result"]);
 }
 
-bool RemoteBackend::searchRecords(const string& pattern, int maxResults, vector<DNSResourceRecord>& result)
+bool RemoteBackend::searchRecords(const string& pattern, size_t maxResults, vector<DNSResourceRecord>& result)
 {
+  const auto intMax = static_cast<decltype(maxResults)>(std::numeric_limits<int>::max());
+  if (maxResults > intMax) {
+    throw std::out_of_range("Remote backend: length of list of result (" + std::to_string(maxResults) + ") is larger than what the JSON library supports for serialization (" + std::to_string(intMax) + ")");
+  }
+
   Json query = Json::object{
     {"method", "searchRecords"},
-    {"parameters", Json::object{{"pattern", pattern}, {"maxResults", maxResults}}}};
+    {"parameters", Json::object{{"pattern", pattern}, {"maxResults", static_cast<int>(maxResults)}}}};
 
   Json answer;
   if (!this->send(query) || !this->recv(answer)) {
@@ -866,7 +872,7 @@ bool RemoteBackend::searchRecords(const string& pattern, int maxResults, vector<
   return true;
 }
 
-bool RemoteBackend::searchComments(const string& /* pattern */, int /* maxResults */, vector<Comment>& /* result */)
+bool RemoteBackend::searchComments(const string& /* pattern */, size_t /* maxResults */, vector<Comment>& /* result */)
 {
   // FIXME: Implement Comment API
   return false;
@@ -894,7 +900,7 @@ void RemoteBackend::getAllDomains(vector<DomainInfo>* domains, bool /* getSerial
   }
 }
 
-void RemoteBackend::getUpdatedMasters(vector<DomainInfo>& domains, std::unordered_set<DNSName>& /* catalogs */, CatalogHashMap& /* catalogHashes */)
+void RemoteBackend::getUpdatedPrimaries(vector<DomainInfo>& domains, std::unordered_set<DNSName>& /* catalogs */, CatalogHashMap& /* catalogHashes */)
 {
   Json query = Json::object{
     {"method", "getUpdatedMasters"},
@@ -917,7 +923,7 @@ void RemoteBackend::getUpdatedMasters(vector<DomainInfo>& domains, std::unordere
   }
 }
 
-void RemoteBackend::getUnfreshSlaveInfos(vector<DomainInfo>* domains)
+void RemoteBackend::getUnfreshSecondaryInfos(vector<DomainInfo>* domains)
 {
   Json query = Json::object{
     {"method", "getUnfreshSlaveInfos"},
@@ -1001,7 +1007,7 @@ public:
 
 RemoteLoader::RemoteLoader()
 {
-  BackendMakers().report(new RemoteBackendFactory);
+  BackendMakers().report(std::make_unique<RemoteBackendFactory>());
   g_log << Logger::Info << kBackendId << " This is the remote backend version " VERSION
 #ifndef REPRODUCIBLE
         << " (" __DATE__ " " __TIME__ ")"

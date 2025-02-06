@@ -59,5 +59,15 @@ namespace PacketMangling
 {
   bool editDNSHeaderFromPacket(PacketBuffer& packet, const std::function<bool(dnsheader& header)>& editFunction);
   bool editDNSHeaderFromRawPacket(void* packet, const std::function<bool(dnsheader& header)>& editFunction);
+  void restrictDNSPacketTTLs(PacketBuffer& packet, uint32_t minimumValue, uint32_t maximumValue = std::numeric_limits<uint32_t>::max(), const std::unordered_set<QType>& types = {});
 }
+
+struct ResponseConfig
+{
+  boost::optional<bool> setAA{boost::none};
+  boost::optional<bool> setAD{boost::none};
+  boost::optional<bool> setRA{boost::none};
+  uint32_t ttl{60};
+};
+void setResponseHeadersFromConfig(dnsheader& dnsheader, const ResponseConfig& config);
 }

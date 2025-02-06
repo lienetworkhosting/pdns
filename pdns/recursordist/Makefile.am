@@ -1,17 +1,16 @@
-JSON11_LIBS = $(top_srcdir)/ext/json11/libjson11.la
-PROBDS_LIBS = $(top_srcdir)/ext/probds/libprobds.la
-ARC4RANDOM_LIBS = $(top_srcdir)/ext/arc4random/libarc4random.la
-RUST_LIBS = $(top_srcdir)/settings/rust/libsettings.a $(LIBDL)
+JSON11_LIBS = $(top_builddir)/ext/json11/libjson11.la
+PROBDS_LIBS = $(top_builddir)/ext/probds/libprobds.la
+ARC4RANDOM_LIBS = $(top_builddir)/ext/arc4random/libarc4random.la
+RUST_LIBS = $(top_builddir)/settings/rust/libsettings.a $(LIBDL)
 
 AM_CPPFLAGS = $(LUA_CFLAGS) $(YAHTTP_CFLAGS) $(BOOST_CPPFLAGS) $(LIBSODIUM_CFLAGS) $(NET_SNMP_CFLAGS) $(LIBCAP_CFLAGS) $(SANITIZER_FLAGS) -O3 -Wall -pthread -DSYSCONFDIR=\"${sysconfdir}\" $(SYSTEMD_CFLAGS)
-
-if LIBDECAF
-AM_CPPFLAGS += $(LIBDECAF_CFLAGS)
-endif
 
 AM_CPPFLAGS += \
 	-I$(top_srcdir)/ext/json11 \
 	-I$(top_srcdir)/ext/protozero/include \
+	-I$(top_srcdir)/settings \
+	-I$(top_builddir)/settings \
+	-I$(top_srcdir)/settings/rust/src \
 	$(YAHTTP_CFLAGS) \
 	$(LIBCRYPTO_INCLUDES) \
 	-DBOOST_CONTAINER_USE_STD_EXCEPTIONS
@@ -21,10 +20,8 @@ AM_CXXFLAGS = \
 	-DPKGLIBDIR=\"$(pkglibdir)\" \
 	-DLOCALSTATEDIR=\"$(socketdir)\"
 
-if NOD_ENABLED
 AM_CXXFLAGS += \
-	-DNODCACHEDIR=\"$(nodcachedir)\"
-endif
+	-DNODCACHEDIRNOD=\"$(nodcachedir)/nod\" -DNODCACHEDIRUDR=\"$(nodcachedir)/udr\"
 
 if FSTRM
 AM_CPPFLAGS += \
@@ -38,13 +35,23 @@ AM_LDFLAGS = \
 ACLOCAL_AMFLAGS = -I m4
 
 BUILT_SOURCES=htmlfiles.h \
-	dnslabeltext.cc
+	dnslabeltext.cc \
+	rec-metrics-gen.h \
+	rec-prometheus-gen.h \
+	rec-snmp-gen.h \
+	rec-oids-gen.h \
+	RECURSOR-MIB.txt
 
 CLEANFILES = htmlfiles.h \
-	recursor.conf-dist recursor.yml-dist
+	recursor.yml-dist
 
-htmlfiles.h: incfiles html/* html/js/*
-	./incfiles > $@
+htmlfiles.h: incfiles ${srcdir}/html/* ${srcdir}/html/js/*
+	$(AM_V_GEN)$(srcdir)/incfiles > $@.tmp
+	@mv $@.tmp $@
+
+# Use patterns to avoid having two instances of generate run simultaneously, a well-known hack for GNU make
+rec-metrics-gen%h rec-prometheus-gen%h rec-snmp-gen%h rec-oids-gen%h RECURSOR-MIB%txt: metrics.py metrics_table.py RECURSOR-MIB.in
+	$(PYTHON) metrics.py
 
 # We explicitly build settings in two steps, as settings modifies files in the settings/rust subdir
 SUBDIRS=ext settings settings/rust
@@ -66,8 +73,6 @@ EXTRA_DIST = \
 	lua_hpp.mk \
 	malloctrace.cc malloctrace.hh \
 	mkpubsuffixcc \
-	mtasker.cc \
-	mtasker_fcontext.cc mtasker_ucontext.cc \
 	NOTICE \
 	opensslsigners.hh opensslsigners.cc \
 	portsmplexer.cc \
@@ -78,6 +83,13 @@ EXTRA_DIST = \
 	test_libcrypto \
 	pdns-recursor.service.in \
 	RECURSOR-MIB.txt \
+	metrics.py \
+	metrics_table.py \
+	RECURSOR-MIB.in \
+	rec-metrics-gen.h \
+	rec-prometheus-gen.h \
+	rec-snmp-gen.h \
+	rec-oids-gen.h \
 	builder-support/gen-version
 
 dist-hook:
@@ -168,6 +180,7 @@ pdns_recursor_SOURCES = \
 	pubsuffixloader.cc \
 	qtype.hh qtype.cc \
 	query-local-address.hh query-local-address.cc \
+	ratelimitedlog.hh \
 	rcpgenerator.cc rcpgenerator.hh \
 	rec-carbon.cc \
 	rec-eventtrace.cc rec-eventtrace.hh \
@@ -176,10 +189,13 @@ pdns_recursor_SOURCES = \
 	rec-protozero.cc rec-protozero.hh \
 	rec-responsestats.hh rec-responsestats.cc \
 	rec-snmp.hh rec-snmp.cc \
+	rec-system-resolve.hh rec-system-resolve.cc \
 	rec-taskqueue.cc rec-taskqueue.hh \
 	rec-tcounters.cc rec-tcounters.hh \
 	rec-tcp.cc \
 	rec-tcpout.cc rec-tcpout.hh \
+	rec-xfr.cc rec-xfr.hh \
+	rec-xfrtracker.cc \
 	rec-zonetocache.cc rec-zonetocache.hh \
 	rec_channel.cc rec_channel.hh rec_metrics.hh \
 	rec_channel_rec.cc \
@@ -218,6 +234,7 @@ pdns_recursor_SOURCES = \
 	uuid-utils.hh uuid-utils.cc \
 	validate.cc validate.hh validate-recursor.cc validate-recursor.hh \
 	version.cc version.hh \
+	views.hh \
 	webserver.cc webserver.hh \
 	ws-api.cc ws-api.hh \
 	ws-recursor.cc ws-recursor.hh \
@@ -304,11 +321,14 @@ testrunner_SOURCES = \
 	pollmplexer.cc \
 	qtype.cc qtype.hh \
 	query-local-address.hh query-local-address.cc \
+	ratelimitedlog.hh \
 	rcpgenerator.cc \
 	rec-eventtrace.cc rec-eventtrace.hh \
 	rec-responsestats.hh rec-responsestats.cc \
+	rec-system-resolve.hh rec-system-resolve.cc \
 	rec-taskqueue.cc rec-taskqueue.hh \
 	rec-tcounters.cc rec-tcounters.hh \
+	rec-xfrtracker.cc \
 	rec-zonetocache.cc rec-zonetocache.hh \
 	recpacketcache.cc recpacketcache.hh \
 	recursor_cache.cc recursor_cache.hh \
@@ -319,7 +339,9 @@ testrunner_SOURCES = \
 	secpoll.cc \
 	settings/cxxsupport.cc \
 	sholder.hh \
+	shuffle.cc shuffle.hh \
 	sillyrecords.cc \
+	sortlist.cc sortlist.hh \
 	sstuff.hh \
 	stable-bloom.hh \
 	svc-records.cc svc-records.hh \
@@ -348,6 +370,7 @@ testrunner_SOURCES = \
 	test-negcache_cc.cc \
 	test-packetcache_hh.cc \
 	test-rcpgenerator_cc.cc \
+	test-rec-system-resolve.cc \
 	test-rec-taskqueue.cc \
 	test-rec-tcounters_cc.cc \
 	test-rec-zonetocache.cc \
@@ -357,6 +380,8 @@ testrunner_SOURCES = \
 	test-rpzloader_cc.cc \
 	test-secpoll_cc.cc \
 	test-settings.cc \
+	test-sholder_hh.cc \
+	test-shuffle_cc.cc \
 	test-signers.cc \
 	test-syncres_cc.cc \
 	test-syncres_cc.hh \
@@ -377,6 +402,7 @@ testrunner_SOURCES = \
 	unix_utility.cc \
 	validate-recursor.cc validate-recursor.hh \
 	validate.cc validate.hh \
+	version.cc version.hh \
 	zonemd.cc zonemd.hh \
 	zoneparser-tng.cc zoneparser-tng.hh
 
@@ -425,12 +451,6 @@ endif
 
 
 
-if LIBDECAF
-pdns_recursor_SOURCES += \
-	decafsigners.cc
-pdns_recursor_LDADD += $(LIBDECAF_LIBS)
-endif
-
 if MALLOC_TRACE
 pdns_recursor_SOURCES += \
 	malloctrace.cc \
@@ -440,6 +460,7 @@ endif
 
 if LUA
 pdns_recursor_LDADD += $(LUA_LIBS)
+rec_control_LDADD += $(LUA_LIBS)
 testrunner_LDADD += $(LUA_LIBS)
 endif
 
@@ -501,17 +522,32 @@ endif
 
 rec_control_SOURCES = \
 	arguments.cc arguments.hh \
+	base32.cc base32.hh \
 	base64.cc base64.hh \
 	credentials.cc credentials.hh \
 	dnslabeltext.cc \
 	dnsname.hh dnsname.cc \
+	dnsparser.cc dnsparser.hh \
+	dnsrecords.cc dnsrecords.hh \
+	dnswriter.cc dnswriter.hh \
+	filterpo.cc filterpo.hh \
+	iputils.cc iputils.hh \
 	logger.cc \
 	logging.cc \
+	lua-base4.cc lua-base4.hh \
 	misc.cc \
+	nsecrecords.cc \
 	qtype.cc \
+	rcpgenerator.cc	rcpgenerator.hh \
+	rec-lua-conf.cc rec-lua-conf.hh \
+	rec-system-resolve.cc rec-system-resolve.hh \
 	rec_channel.cc rec_channel.hh \
 	rec_control.cc \
 	settings/cxxsupport.cc \
+	sillyrecords.cc \
+	sortlist.cc sortlist.hh \
+	svc-records.cc svc-records.hh \
+	threadname.cc threadname.hh \
 	unix_utility.cc
 
 nodist_rec_control_SOURCES = \
@@ -527,13 +563,10 @@ $(srcdir)/effective_tld_names.dat:
 	$(curl_verbose)if ! curl -s -S https://publicsuffix.org/list/public_suffix_list.dat > $@; then rm -f $@; exit 1; fi
 
 pubsuffix.cc: $(srcdir)/effective_tld_names.dat
-	$(AM_V_GEN)./mkpubsuffixcc
+	$(srcdir)/mkpubsuffixcc $< $@
 
 ## Config file
-sysconf_DATA = recursor.conf-dist recursor.yml-dist
-
-recursor.conf-dist: pdns_recursor
-	$(AM_V_GEN)./pdns_recursor --config=default > $@
+sysconf_DATA = recursor.yml-dist
 
 recursor.yml-dist: pdns_recursor
 	dir=$$(mktemp -d) && touch "$$dir/recursor.yml" && ./pdns_recursor --config-dir="$$dir" --config=default 2> /dev/null > $@ && rm "$$dir/recursor.yml" && rmdir "$$dir"
@@ -547,13 +580,13 @@ dist_man_MANS=$(MANPAGES)
 if HAVE_VENV
 if !HAVE_MANPAGES
 $(MANPAGES): %: docs/manpages/%.rst .venv
-	.venv/bin/python -msphinx -b man docs . $<
+	$(builddir)/.venv/bin/python -msphinx -b man "$(srcdir)/docs" "$(builddir)" $<
 endif # if !HAVE_MANPAGES
 
 .venv: docs/requirements.txt
 	$(PYTHON) -m venv .venv
 	.venv/bin/pip install -U pip setuptools setuptools-git wheel
-	.venv/bin/pip install -r docs/requirements.txt
+	.venv/bin/pip install -r ${top_srcdir}/docs/requirements.txt
 
 html-docs: docs/** .venv
 	.venv/bin/python -msphinx -b html docs html-docs

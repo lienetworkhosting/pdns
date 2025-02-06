@@ -651,7 +651,6 @@ DEBFULLNAME
 debhelper
 debtest
 DEBUGLOG
-decafsigners
 decltype
 deconfigure
 deconfigured
@@ -1314,6 +1313,7 @@ getvalue
 getvars
 ghostscript
 gir
+github
 gitlab
 givr
 gjeqe
@@ -1442,15 +1442,11 @@ HSIZE
 HSw
 HTAB
 htmlfiles
-htobe
-htole
-htonl
-htons
-htons'ed
 httpconnector
 httpconnects
 httpd
 HTTPHEADER
+https
 httpversion
 HUnit
 hwinfo
@@ -1813,7 +1809,6 @@ llu
 LMDBQ
 lnc
 lnow
-loaderdecaf
 loadersodium
 loadfile
 loadmodule
@@ -1825,6 +1820,7 @@ localdata
 localname
 localsock
 localstatedir
+localwho
 loctext
 locwild
 logaction
@@ -2546,6 +2542,7 @@ pbegin
 pbf
 PBKDF
 PBpq
+pbr
 pbtag
 pcall
 PCDNSSEC
@@ -3143,6 +3140,7 @@ sched
 schemaversion
 scl
 sclo
+scm
 SCNu
 SCombo
 SConnect
@@ -3335,7 +3333,6 @@ sockname
 sockowner
 socktype
 sodbc
-sodcrypto
 sodiumsigners
 sokolov
 somedata
@@ -3548,8 +3545,8 @@ tcpavgqueriesperconnection
 tcpbench
 tcpbytesanswered
 tcpclient
-tcpclienttimeouts
 tcpclientthreads
+tcpclienttimeouts
 tcpcurrentconnections
 tcpdiedreaddingresponse
 tcpdiedreadingquery
@@ -3805,6 +3802,7 @@ TZOFF
 uapi
 UBIGINT
 ubsan
+ubuntu
 UBXc
 ucf
 ucfq
@@ -3855,10 +3853,10 @@ undeffed
 UNDOC
 unescape
 unhexlify
-uninstall
 unicode
 Unicode
 UNICODE
+uninstall
 uniq
 uniquw
 UNIREGISTRYMARKET
@@ -3899,8 +3897,8 @@ useradd
 useragent
 userdata
 userfriendly
-username
 usermsec
+username
 userperc
 USHRT
 usleep
@@ -4045,6 +4043,7 @@ WNOHANG
 Woi
 Wor
 wordpad
+workarounds
 workdir
 workflow
 Wowie
@@ -4081,9 +4080,9 @@ xffverylongstring
 XFRd
 XFRM
 xfrserver
-xhtml
-XHTML
 xhr
+XHTML
+xhtml
 xit
 xlabel
 xluajit

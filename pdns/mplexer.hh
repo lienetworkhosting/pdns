@@ -70,17 +70,34 @@ protected:
   };
 
 public:
-  FDMultiplexer() :
-    d_inrun(false)
-  {}
-  virtual ~FDMultiplexer()
-  {}
+  virtual ~FDMultiplexer() = default;
 
   // The maximum number of events processed in a single run, not the maximum of watched descriptors
   static constexpr unsigned int s_maxevents = 1024;
   /* The maximum number of events processed in a single run will be capped to the
      minimum value of maxEventsHint and s_maxevents, to reduce memory usage. */
   static FDMultiplexer* getMultiplexerSilent(unsigned int maxEventsHint = s_maxevents);
+
+  struct InRun
+  {
+    InRun(const InRun&) = delete;
+    InRun(InRun&&) = delete;
+    InRun& operator=(const InRun&) = delete;
+    InRun& operator=(InRun&&) = delete;
+    InRun(bool& ref) :
+      d_inrun(ref)
+    {
+      if (d_inrun) {
+        throw FDMultiplexerException("FDMultiplexer::run() is not reentrant!");
+      }
+      d_inrun = true;
+    }
+    ~InRun()
+    {
+      d_inrun = false;
+    }
+    bool& d_inrun;
+  };
 
   /* tv will be updated to 'now' before run returns */
   /* timeout is in ms, 0 will return immediately, -1 will block until at
@@ -201,11 +218,11 @@ public:
     const auto tied = std::tie(tv.tv_sec, tv.tv_usec);
     auto& idx = writes ? d_writeCallbacks.get<TTDOrderedTag>() : d_readCallbacks.get<TTDOrderedTag>();
 
-    for (auto it = idx.begin(); it != idx.end(); ++it) {
-      if (it->d_ttd.tv_sec == 0 || tied <= std::tie(it->d_ttd.tv_sec, it->d_ttd.tv_usec)) {
+    for (const auto& t : idx) {
+      if (t.d_ttd.tv_sec == 0 || tied <= std::tie(t.d_ttd.tv_sec, t.d_ttd.tv_usec)) {
         break;
       }
-      ret.emplace_back(it->d_fd, it->d_parameter);
+      ret.emplace_back(t.d_fd, t.d_parameter);
     }
 
     return ret;
@@ -276,7 +293,7 @@ protected:
     callbackmap_t;
 
   callbackmap_t d_readCallbacks, d_writeCallbacks;
-  bool d_inrun;
+  bool d_inrun{false};
 
   void accountingAddFD(callbackmap_t& cbmap, int fd, callbackfunc_t toDo, const funcparam_t& parameter, const struct timeval* ttd)
   {

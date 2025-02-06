@@ -4,6 +4,7 @@ import socket
 import struct
 import sys
 import time
+import requests
 
 try:
     range = xrange
@@ -13,7 +14,7 @@ except NameError:
 from recursortests import RecursorTest
 from proxyprotocol import ProxyProtocol
 
-class ProxyProtocolRecursorTest(RecursorTest):
+class ProxyProtocolTest(RecursorTest):
 
     @classmethod
     def setUpClass(cls):
@@ -32,8 +33,12 @@ class ProxyProtocolRecursorTest(RecursorTest):
     def tearDownClass(cls):
         cls.tearDownRecursor()
 
-class ProxyProtocolAllowedRecursorTest(ProxyProtocolRecursorTest):
-    _confdir = 'ProxyProtocol'
+class ProxyProtocolAllowedTest(ProxyProtocolTest):
+    _confdir = 'ProxyProtocolAllowed'
+    _wsPort = 8042
+    _wsTimeout = 2
+    _wsPassword = 'secretpassword'
+    _apiKey = 'secretapikey'
     _lua_dns_script_file = """
 
     function gettag(remote, ednssubnet, localip, qname, qtype, ednsoptions, tcp, proxyProtocolValues)
@@ -111,16 +116,52 @@ class ProxyProtocolAllowedRecursorTest(ProxyProtocolRecursorTest):
         return true
       end
 
+      local interfaceremoteaddr = dq.interface_remoteaddr:toString()
+      local interfacelocaladdr = dq.interface_localaddr:toStringWithPort()
+
+      if interfaceremoteaddr ~= '127.0.0.1' and interfaceremoteaddr ~= '[::]' then
+        pdnslog('invalid interface source '..interfaceremoteaddr)
+        dq:addAnswer(pdns.A, '192.0.2.131', 60)
+        return true
+      end
+      if interfacelocaladdr ~= '127.0.0.1:%d' and interfacelocaladdr ~= '[::1]:%d' then
+        pdnslog('invalid interfacedest '..interfacelocaladdr)
+        dq:addAnswer(pdns.A, '192.0.2.132', 60)
+        return true
+      end
+
       dq:addAnswer(pdns.A, '192.0.2.1', 60)
       return true
     end
-    """
+    """ % (ProxyProtocolTest._recursorPort, ProxyProtocolTest._recursorPort)
 
     _config_template = """
     proxy-protocol-from=127.0.0.1
     proxy-protocol-maximum-size=512
     allow-from=127.0.0.0/24, ::1/128, ::42/128
-""" % ()
+    webserver=yes
+    webserver-port=%d
+    webserver-address=127.0.0.1
+    webserver-password=%s
+api-key=%s
+
+""" % (_wsPort, _wsPassword, _apiKey)
+
+    def checkStats(self, expected127001):
+        headers = {'x-api-key': self._apiKey}
+        url = 'http://127.0.0.1:' + str(self._wsPort) + '/jsonstat?command=get-remote-ring&name=remotes'
+        r = requests.get(url, headers=headers, timeout=self._wsTimeout)
+        self.assertTrue(r)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json())
+        content = r.json()
+        # We allow all kind of entries, but 127.0.0.1 must have the given value, due to the
+        # testLocalProxyProtocol test, which actually does not set a source address.  If we see a
+        # higher value than expected, some ProxyProtocol clients were accounted as 127.0.0.1, which
+        # is not right as all other tests set a source addres other than 127.0.0.1
+        for entry in content['entries']:
+            if entry[1] == '127.0.0.1':
+                self.assertEqual(entry[0], expected127001)
 
     def testLocalProxyProtocol(self):
         qname = 'local.proxy-protocol.recursor-tests.powerdns.com.'
@@ -147,6 +188,7 @@ class ProxyProtocolAllowedRecursorTest(ProxyProtocolRecursorTest):
             res = dns.message.from_wire(data)
         self.assertRcodeEqual(res, dns.rcode.NOERROR)
         self.assertRRsetInAnswer(res, expected)
+        self.checkStats(1)
 
         # TCP
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -175,6 +217,7 @@ class ProxyProtocolAllowedRecursorTest(ProxyProtocolRecursorTest):
             res = dns.message.from_wire(data)
         self.assertRcodeEqual(res, dns.rcode.NOERROR)
         self.assertRRsetInAnswer(res, expected)
+        self.checkStats(2)
 
     def testInvalidMagicProxyProtocol(self):
         qname = 'invalid-magic.proxy-protocol.recursor-tests.powerdns.com.'
@@ -443,9 +486,9 @@ class ProxyProtocolAllowedRecursorTest(ProxyProtocolRecursorTest):
         self.assertEqual(count, 5)
         sock.close()
 
-class ProxyProtocolAllowedFFIRecursorTest(ProxyProtocolAllowedRecursorTest):
-    # same tests than ProxyProtocolAllowedRecursorTest but with the Lua FFI interface instead of the regular one
-    _confdir = 'ProxyProtocolFFI'
+class ProxyProtocolAllowedFFITest(ProxyProtocolAllowedTest):
+    # same tests than ProxyProtocolAllowedTest but with the Lua FFI interface instead of the regular one
+    _confdir = 'ProxyProtocolAllowedFFI'
     _lua_dns_script_file = """
     local ffi = require("ffi")
 
@@ -463,6 +506,11 @@ class ProxyProtocolAllowedFFIRecursorTest(ProxyProtocolAllowedRecursorTest):
       const char* pdns_ffi_param_get_local(pdns_ffi_param_t* ref);
       uint16_t pdns_ffi_param_get_remote_port(const pdns_ffi_param_t* ref);
       uint16_t pdns_ffi_param_get_local_port(const pdns_ffi_param_t* ref);
+
+      const char* pdns_ffi_param_get_interface_remote(pdns_ffi_param_t* ref);
+      const char* pdns_ffi_param_get_interface_local(pdns_ffi_param_t* ref);
+      uint16_t pdns_ffi_param_get_interface_remote_port(const pdns_ffi_param_t* ref);
+      uint16_t pdns_ffi_param_get_interface_local_port(const pdns_ffi_param_t* ref);
 
       void pdns_ffi_param_set_tag(pdns_ffi_param_t* ref, unsigned int tag);
     ]]
@@ -492,6 +540,26 @@ class ProxyProtocolAllowedFFIRecursorTest(ProxyProtocolAllowedRecursorTest):
 
       if ffi.C.pdns_ffi_param_get_local_port(obj) ~= 65535 then
         pdnslog('gettag-ffi: invalid source port '..ffi.C.pdns_ffi_param_get_local_port(obj))
+        ffi.C.pdns_ffi_param_set_tag(obj, 2)
+        return
+      end
+
+      local interfaceremoteaddr = ffi.string(ffi.C.pdns_ffi_param_get_interface_remote(obj))
+      local interfacelocaladdr = ffi.string(ffi.C.pdns_ffi_param_get_interface_local(obj))
+
+      if interfaceremoteaddr ~= '127.0.0.1' and remoteaddr ~= '::1' then
+        pdnslog('gettag-ffi: invalid interface source '..interfaceremoteaddr)
+        ffi.C.pdns_ffi_param_set_tag(obj, 1)
+        return
+      end
+      if interfacelocaladdr ~= '127.0.0.1' and interfacelocaladdr ~= '::1' then
+        pdnslog('gettag-ffi: invalid interface dest '..interfacelocaladdr)
+        ffi.C.pdns_ffi_param_set_tag(obj, 2)
+        return
+      end
+
+      if ffi.C.pdns_ffi_param_get_interface_local_port(obj) ~= %d then
+        pdnslog('gettag-ffi: invalid interface source port '..ffi.C.pdns_ffi_param_get_interface_local_port(obj))
         ffi.C.pdns_ffi_param_set_tag(obj, 2)
         return
       end
@@ -566,9 +634,9 @@ class ProxyProtocolAllowedFFIRecursorTest(ProxyProtocolAllowedRecursorTest):
       dq:addAnswer(pdns.A, '192.0.2.1', 60)
       return true
     end
-    """
+    """ % (ProxyProtocolAllowedTest._recursorPort)
 
-class ProxyProtocolNotAllowedRecursorTest(ProxyProtocolRecursorTest):
+class ProxyProtocolNotAllowedTest(ProxyProtocolTest):
     _confdir = 'ProxyProtocolNotAllowed'
     _lua_dns_script_file = """
 
@@ -603,3 +671,41 @@ class ProxyProtocolNotAllowedRecursorTest(ProxyProtocolRecursorTest):
             sender = getattr(self, method)
             res = sender(query, False, '127.0.0.42', '255.255.255.255', 0, 65535, [ [0, b'foo' ], [ 255, b'bar'] ])
             self.assertEqual(res, None)
+
+class ProxyProtocolExceptionTest(ProxyProtocolTest):
+    _confdir = 'ProxyProtocolException'
+    _lua_dns_script_file = """
+
+    function preresolve(dq)
+      dq:addAnswer(pdns.A, '192.0.2.1', 60)
+      return true
+    end
+    """
+
+    _config_template = """
+    proxy-protocol-from=127.0.0.1/32
+    proxy-protocol-exceptions=127.0.0.1:%d
+    allow-from=127.0.0.0/24, ::1/128
+""" % (ProxyProtocolTest._recursorPort)
+
+    def testNoHeaderProxyProtocol(self):
+        qname = 'no-header.proxy-protocol-not-allowed.recursor-tests.powerdns.com.'
+        expected = dns.rrset.from_text(qname, 0, dns.rdataclass.IN, 'A', '192.0.2.1')
+
+        query = dns.message.make_query(qname, 'A', want_dnssec=True)
+        for method in ("sendUDPQuery", "sendTCPQuery"):
+            sender = getattr(self, method)
+            res = sender(query)
+            self.assertRcodeEqual(res, dns.rcode.NOERROR)
+            self.assertRRsetInAnswer(res, expected)
+
+    def testIPv4ProxyProtocol(self):
+        qname = 'ipv4.proxy-protocol-not-allowed.recursor-tests.powerdns.com.'
+        expected = dns.rrset.from_text(qname, 0, dns.rdataclass.IN, 'A', '192.0.2.1')
+
+        query = dns.message.make_query(qname, 'A', want_dnssec=True)
+        for method in ("sendUDPQueryWithProxyProtocol", "sendTCPQueryWithProxyProtocol"):
+            sender = getattr(self, method)
+            res = sender(query, False, '127.0.0.42', '255.255.255.255', 0, 65535, [ [0, b'foo' ], [ 255, b'bar'] ])
+            self.assertEqual(res, None)
+

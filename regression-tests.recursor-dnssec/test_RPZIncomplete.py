@@ -17,7 +17,7 @@ class BadRPZServer(object):
         self._targetSerial = 1
         self._serverPort = port
         listener = threading.Thread(name='RPZ Listener', target=self._listener, args=[])
-        listener.setDaemon(True)
+        listener.daemon = True
         listener.start()
 
     def getCurrentSerial(self):
@@ -117,7 +117,7 @@ class BadRPZServer(object):
                 thread = threading.Thread(name='RPZ Connection Handler',
                                       target=self._connectionHandler,
                                       args=[conn])
-                thread.setDaemon(True)
+                thread.daemon = True
                 thread.start()
 
             except socket.error as e:
@@ -129,7 +129,7 @@ class RPZIncompleteRecursorTest(RecursorTest):
     _wsTimeout = 2
     _wsPassword = 'secretpassword'
     _apiKey = 'secretapikey'
-    _confdir = 'RPZIncomplete'
+    _confdir = 'RPZIncompleteRecursor'
     _auth_zones = {
         '8': {'threads': 1,
               'zones': ['ROOT']},
@@ -179,7 +179,7 @@ class RPZXFRIncompleteRecursorTest(RPZIncompleteRecursorTest):
     -- The first server is a bogus one, to test that we correctly fail over to the second one
     rpzMaster({'127.0.0.1:9999', '127.0.0.1:%d'}, 'zone.rpz.', { refresh=1 })
     """ % (badrpzServerPort)
-    _confdir = 'RPZXFRIncomplete'
+    _confdir = 'RPZXFRIncompleteRecursor'
     _wsPort = 8042
     _wsTimeout = 2
     _wsPassword = 'secretpassword'

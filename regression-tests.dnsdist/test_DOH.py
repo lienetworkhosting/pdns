@@ -8,12 +8,14 @@ import unittest
 import clientsubnetoption
 
 from dnsdistdohtests import DNSDistDOHTest
-from dnsdisttests import pickAvailablePort
+from dnsdisttests import DNSDistTest, pickAvailablePort
 
 import pycurl
 from io import BytesIO
 
 class DOHTests(object):
+    _consoleKey = DNSDistTest.generateConsoleKey()
+    _consoleKeyB64 = base64.b64encode(_consoleKey).decode('ascii')
     _serverKey = 'server.key'
     _serverCert = 'server.chain'
     _serverName = 'tls.tests.dnsdist.org'
@@ -23,6 +25,9 @@ class DOHTests(object):
     _customResponseHeader2 = 'user-agent: derp'
     _dohBaseURL = ("https://%s:%d/" % (_serverName, _dohServerPort))
     _config_template = """
+    setKey("%s")
+    controlSocket("127.0.0.1:%s")
+
     newServer{address="127.0.0.1:%d"}
 
     addAction("drop.doh.tests.powerdns.com.", DropAction())
@@ -58,7 +63,7 @@ class DOHTests(object):
     dohFE = getDOHFrontend(0)
     dohFE:setResponsesMap({newDOHResponseMapEntry('^/coffee$', 418, 'C0FFEE', {['FoO']='bar'})})
     """
-    _config_params = ['_testServerPort', '_serverName', '_dohServerPort', '_dohServerPort', '_serverCert', '_serverKey', '_dohLibrary']
+    _config_params = ['_consoleKeyB64', '_consolePort', '_testServerPort', '_serverName', '_dohServerPort', '_dohServerPort', '_serverCert', '_serverKey', '_dohLibrary']
     _verboseMode = True
 
     def testDOHSimple(self):
@@ -179,6 +184,7 @@ class DOHTests(object):
         query.id = 0
         response = dns.message.make_response(query)
         response.use_edns(edns=True, payload=4096, options=[rewrittenEcso])
+        response.want_dnssec(True)
         rrset = dns.rrset.from_text(name,
                                     3600,
                                     dns.rdataclass.IN,
@@ -376,6 +382,61 @@ class DOHTests(object):
             self.assertFalse(response)
         except:
             pass
+
+    def getHTTPCounter(self, name):
+        lines = self.sendConsoleCommand("showDOHFrontends()").splitlines()
+        self.assertEqual(len(lines), 2)
+        metrics = lines[1].split()
+        self.assertEqual(len(metrics), 15)
+        if name == 'connects':
+            return int(metrics[2])
+        if name == 'http/1.1':
+            return int(metrics[3])
+        if name == 'http/2':
+            return int(metrics[4])
+
+    def testDOHHTTP1(self):
+        """
+        DOH: HTTP/1.1
+        """
+        if self._dohLibrary == 'h2o':
+            raise unittest.SkipTest('h2o supports HTTP/1.1, this test is only relevant for nghttp2')
+        httpConnections = self.getHTTPCounter('connects')
+        http1 = self.getHTTPCounter('http/1.1')
+        http2 = self.getHTTPCounter('http/2')
+        name = 'http11.doh.tests.powerdns.com.'
+        query = dns.message.make_query(name, 'A', 'IN', use_edns=False)
+        wire = query.to_wire()
+        b64 = base64.urlsafe_b64encode(wire).decode('UTF8').rstrip('=')
+        url = self._dohBaseURL + '?dns=' + b64
+        conn = pycurl.Curl()
+        conn.setopt(pycurl.HTTP_VERSION, pycurl.CURL_HTTP_VERSION_1_1)
+        conn.setopt(pycurl.HTTPHEADER, ["Content-type: application/dns-message",
+                                         "Accept: application/dns-message"])
+        conn.setopt(pycurl.URL, url)
+        conn.setopt(pycurl.RESOLVE, ["%s:%d:127.0.0.1" % (self._serverName, self._dohServerPort)])
+        conn.setopt(pycurl.SSL_VERIFYPEER, 1)
+        conn.setopt(pycurl.SSL_VERIFYHOST, 2)
+        conn.setopt(pycurl.CAINFO, self._caCert)
+        data = conn.perform_rb()
+        rcode = conn.getinfo(pycurl.RESPONSE_CODE)
+        self.assertEqual(rcode, 400)
+        self.assertEqual(data, b'<html><body>This server implements RFC 8484 - DNS Queries over HTTP, and requires HTTP/2 in accordance with section 5.2 of the RFC.</body></html>\r\n')
+        self.assertEqual(self.getHTTPCounter('connects'), httpConnections + 1)
+        self.assertEqual(self.getHTTPCounter('http/1.1'), http1 + 1)
+        self.assertEqual(self.getHTTPCounter('http/2'), http2)
+
+    def testDOHHTTP1NotSelectedOverH2(self):
+        """
+        DOH: Check that HTTP/1.1 is not selected over H2 when offered in the wrong order by the client
+        """
+        if self._dohLibrary == 'h2o':
+            raise unittest.SkipTest('h2o supports HTTP/1.1, this test is only relevant for nghttp2')
+        alpn = ['http/1.1', 'h2']
+        conn = self.openTLSConnection(self._dohServerPort, self._serverName, self._caCert, alpn=alpn)
+        if not hasattr(conn, 'selected_alpn_protocol'):
+            raise unittest.SkipTest('Unable to check the selected ALPN, Python version is too old to support selected_alpn_protocol')
+        self.assertEqual(conn.selected_alpn_protocol(), 'h2')
 
     def testDOHInvalid(self):
         """
@@ -700,6 +761,149 @@ class TestDoHNGHTTP2(DOHTests, DNSDistDOHTest):
 class TestDoHH2O(DOHTests, DNSDistDOHTest):
     _dohLibrary = 'h2o'
 
+class TestDoHNGHTTP2Yaml(DOHTests, DNSDistDOHTest):
+    _dohLibrary = 'nghttp2'
+    _yaml_config_template = """---
+console:
+  key: "%s"
+  listen_address: "127.0.0.1:%d"
+  acl:
+    - 127.0.0.0/8
+backends:
+  - address: "127.0.0.1:%d"
+    protocol: "Do53"
+binds:
+  - listen_address: "127.0.0.1:%d"
+    reuseport: true
+    protocol: "DoH"
+    tls:
+      certificates:
+        - certificate: "%s"
+          key: "%s"
+    doh:
+      provider: "%s"
+      paths:
+        - "/"
+        - "/coffee"
+        - "/PowerDNS"
+        - "/PowerDNS2"
+        - "/PowerDNS-999"
+      custom_response_headers:
+        - key: "access-control-allow-origin"
+          value: "*"
+        - key: "user-agent"
+          value: "derp"
+        - key: "UPPERCASE"
+          value: "VaLuE"
+      keep_incoming_headers: true
+      responses_map:
+        - expression: "^/coffee$"
+          status: 418
+          content: 'C0FFEE'
+          headers:
+           - key: "FoO"
+             value: "bar"
+query_rules:
+  - name: "Drop"
+    selector:
+      type: "QName"
+      qname: "drop.doh.tests.powerdns.com."
+    action:
+      type: "Drop"
+  - name: "Refused"
+    selector:
+      type: "QName"
+      qname: "refused.doh.tests.powerdns.com."
+    action:
+      type: "RCode"
+      rcode: 5
+  - name: "Spoof"
+    selector:
+      type: "QName"
+      qname: "spoof.doh.tests.powerdns.com."
+    action:
+      type: "Spoof"
+      ips:
+        - "1.2.3.4"
+  - name: "HTTP header"
+    selector:
+      type: "HTTPHeader"
+      header: "X-PowerDNS"
+      expression: "^[a]{5}$"
+    action:
+      type: "Spoof"
+      ips:
+        - "2.3.4.5"
+  - name: "HTTP path"
+    selector:
+      type: "HTTPPath"
+      path: "/PowerDNS"
+    action:
+      type: "Spoof"
+      ips:
+        - "3.4.5.6"
+  - name: "HTTP regex"
+    selector:
+      type: "HTTPPathRegex"
+      expression: "^/PowerDNS-[0-9]"
+    action:
+      type: "Spoof"
+      ips:
+        - "6.7.8.9"
+  - name: "HTTP status"
+    selector:
+      type: "QName"
+      qname: "http-status-action.doh.tests.powerdns.com."
+    action:
+      type: "HTTPStatus"
+      status: 200
+      body: "Plaintext answer"
+      content_type: "text/plain"
+  - name: "HTTP status redirect"
+    selector:
+      type: "QName"
+      qname: "http-status-action-redirect.doh.tests.powerdns.com."
+    action:
+      type: "HTTPStatus"
+      status: 307
+      body: "https://doh.powerdns.org"
+  - name: "No backend"
+    selector:
+      type: "QName"
+      qname: "no-backend.doh.tests.powerdns.com."
+    action:
+      type: "Pool"
+      pool_name: "this-pool-has-no-backend"
+  - name: "HTTP Lua"
+    selector:
+      type: "QName"
+      qname: "http-lua.doh.tests.powerdns.com."
+    action:
+      type: "Lua"
+      function_name: "dohHandler"
+"""
+    _yaml_config_params = ['_consoleKeyB64', '_consolePort', '_testServerPort', '_dohServerPort', '_serverCert', '_serverKey', '_dohLibrary']
+    _config_template = """
+    function dohHandler(dq)
+      if dq:getHTTPScheme() == 'https' and dq:getHTTPHost() == '%s:%d' and dq:getHTTPPath() == '/' and dq:getHTTPQueryString() == '' then
+        local foundct = false
+        for key,value in pairs(dq:getHTTPHeaders()) do
+          if key == 'content-type' and value == 'application/dns-message' then
+            foundct = true
+            break
+          end
+        end
+        if foundct then
+          dq:setHTTPResponse(200, 'It works!', 'text/plain')
+          dq.dh:setQR(true)
+          return DNSAction.HeaderModify
+        end
+      end
+      return DNSAction.None
+    end
+    """
+    _config_params = ['_serverName', '_dohServerPort']
+
 class DOHSubPathsTests(object):
     _serverKey = 'server.key'
     _serverCert = 'server.chain'
@@ -839,9 +1043,10 @@ class DOHAddingECSTests(object):
         rewrittenEcso = clientsubnetoption.ClientSubnetOption('127.0.0.0', 24)
         query = dns.message.make_query(name, 'A', 'IN', use_edns=True, payload=512, options=[ecso], want_dnssec=True)
         query.id = 0
-        expectedQuery = dns.message.make_query(name, 'A', 'IN', use_edns=True, payload=512, options=[rewrittenEcso])
+        expectedQuery = dns.message.make_query(name, 'A', 'IN', use_edns=True, payload=512, options=[rewrittenEcso], want_dnssec=True)
         response = dns.message.make_response(query)
         response.use_edns(edns=True, payload=4096, options=[rewrittenEcso])
+        response.want_dnssec(True)
         rrset = dns.rrset.from_text(name,
                                     3600,
                                     dns.rdataclass.IN,
@@ -1651,4 +1856,40 @@ class TestDOHLimitsNGHTTP2(DOHLimits, DNSDistDOHTest):
     _dohLibrary = 'nghttp2'
 
 class TestDOHLimitsH2O(DOHLimits, DNSDistDOHTest):
+    _dohLibrary = 'h2o'
+
+class DOHXFR(object):
+    _serverName = 'tls.tests.dnsdist.org'
+    _caCert = 'ca.pem'
+    _dohServerPort = pickAvailablePort()
+    _dohBaseURL = ("https://%s:%d/" % (_serverName, _dohServerPort))
+    _serverKey = 'server.key'
+    _serverCert = 'server.chain'
+    _maxTCPConnsPerClient = 3
+    _config_template = """
+    newServer{address="127.0.0.1:%d", tcpOnly=true}
+    addDOHLocal("127.0.0.1:%d", "%s", "%s", { "/" }, {library='%s'})
+    """
+    _config_params = ['_testServerPort', '_dohServerPort', '_serverCert', '_serverKey', '_dohLibrary']
+
+    def testXFR(self):
+        """
+        DoH XFR: Check that XFR requests over DoH are refused with NotImp
+        """
+        name = 'xfr.doh.tests.powerdns.com.'
+        for xfrType in [dns.rdatatype.AXFR, dns.rdatatype.IXFR]:
+            query = dns.message.make_query(name, xfrType, 'IN')
+            url = self.getDOHGetURL(self._dohBaseURL, query)
+
+            expectedResponse = dns.message.make_response(query)
+            expectedResponse.set_rcode(dns.rcode.NOTIMP)
+
+            (_, receivedResponse) = self.sendDOHQuery(self._dohServerPort, self._serverName, self._dohBaseURL, query, caFile=self._caCert, useQueue=False)
+
+            self.assertEqual(receivedResponse, expectedResponse)
+
+class TestDOHXFRNGHTTP2(DOHXFR, DNSDistDOHTest):
+    _dohLibrary = 'nghttp2'
+
+class TestDOHXFRH2O(DOHXFR, DNSDistDOHTest):
     _dohLibrary = 'h2o'

@@ -21,6 +21,7 @@
  */
 #pragma once
 #include <set>
+#include <boost/variant.hpp>
 
 #include "sholder.hh"
 #include "sortlist.hh"
@@ -29,6 +30,7 @@
 #include "rec-zonetocache.hh"
 #include "logging.hh"
 #include "fstrm_logger.hh"
+#include "rpzloader.hh"
 
 struct ProtobufExportConfig
 {
@@ -97,14 +99,18 @@ struct ProxyByTableValue
 
 using ProxyMapping = NetmaskTree<ProxyByTableValue, Netmask>;
 
+using rpzOptions_t = std::unordered_map<std::string, boost::variant<bool, uint32_t, std::string, std::vector<std::pair<int, std::string>>>>;
+
 class LuaConfigItems
 {
 public:
   LuaConfigItems();
   SortList sortlist;
   DNSFilterEngine dfe;
+  vector<RPZTrackerParams> rpzs;
+  vector<FWCatalogZone> catalogzones;
   TrustAnchorFileInfo trustAnchorFileInfo; // Used to update the Trust Anchors from file periodically
-  map<DNSName, dsmap_t> dsAnchors;
+  map<DNSName, dsset_t> dsAnchors;
   map<DNSName, std::string> negAnchors;
   map<DNSName, RecZoneToCache::Config> ztcConfigs;
   std::map<QType, std::pair<std::set<QType>, AdditionalMode>> allowAdditionalQTypes;
@@ -123,11 +129,4 @@ public:
 
 extern GlobalStateHolder<LuaConfigItems> g_luaconfs;
 
-struct luaConfigDelayedThreads
-{
-  // Please make sure that the tuple below only contains value types since they are used as parameters in a thread ct
-  std::vector<std::tuple<std::vector<ComboAddress>, boost::optional<DNSFilterEngine::Policy>, bool, uint32_t, size_t, TSIGTriplet, size_t, ComboAddress, uint16_t, uint32_t, std::shared_ptr<const SOARecordContent>, std::string>> rpzPrimaryThreads;
-};
-
-void loadRecursorLuaConfig(const std::string& fname, luaConfigDelayedThreads& delayedThreads, ProxyMapping&);
-void startLuaConfigDelayedThreads(const luaConfigDelayedThreads& delayedThreads, uint64_t generation);
+void loadRecursorLuaConfig(const std::string& fname, ProxyMapping&, LuaConfigItems& newLuaConfig);

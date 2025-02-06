@@ -77,17 +77,23 @@ If your systems shows great imbalance in the number of queries processed per thr
 MTasker and MThreads
 --------------------
 
-PowerDNS Recursor uses a cooperative multitasking in userspace called ``MTasker``, based either on ``boost::context`` if available, or on ``System V ucontexts`` otherwise. For maximum performance, please make sure that your system supports ``boost::context``, as the alternative has been known to be quite slower.
+PowerDNS :program:`Recursor` uses a cooperative multitasking in userspace called ``MTasker``, based either on ``boost::context`` if available, or on ``System V ucontexts`` otherwise. For maximum performance, please make sure that your system supports ``boost::context``, as the alternative has been known to be quite slower.
 
 The maximum number of simultaneous MTasker threads, called ``MThreads``, can be tuned via :ref:`setting-max-mthreads`, as the default value of 2048 might not be enough for large-scale installations.
 This setting limits the number of mthreads *per physical (Posix) thread*.
 The threads that create mthreads are the distributor and worker threads.
 
-When a ``MThread`` is started, a new stack is dynamically allocated for it on the heap. The size of that stack can be configured via the :ref:`setting-stack-size` parameter, whose default value is 200 kB which should be enough in most cases.
+When a ``MThread`` is started, a new stack is dynamically allocated for it. The size of that stack can be configured via the :ref:`setting-stack-size` parameter, whose default value is 200 kB which should be enough in most cases.
 
 To reduce the cost of allocating a new stack for every query, the recursor can cache a small amount of stacks to make sure that the allocation stays cheap. This can be configured via the :ref:`setting-stack-cache-size` setting.
 This limit is per physical (Posix) thread.
 The only trade-off of enabling this cache is a slightly increased memory consumption, at worst equals to the number of stacks specified by :ref:`setting-stack-cache-size` multiplied by the size of one stack, itself specified via :ref:`setting-stack-size`.
+
+Linux limits the number of memory mappings a process can allocate by the ``vm.max_map_count`` kernel parameter.
+A single ``MThread`` stack can take up to 3 memory mappings.
+Starting with version 4.9, it is advised to check and if needed update the value of ``sysctl vm.max_map_count`` to make sure that the :program:`Recursor` can allocate enough stacks under load; suggested value is at least ``4 * (threads + 2) * max-mthreads``.
+Some Linux distributions use a default value of about one million, which should be enough for most configurations.
+Other distributions default to 64k, which can be too low for large setups.
 
 Performance tips
 ----------------
@@ -104,62 +110,68 @@ When running with >3000 queries per second, and running Linux versions prior to 
 This is solved by rebooting with ``clock=tsc`` or upgrading to a 2.6.17 kernel.
 This is relevant if dmesg shows ``Using pmtmr for high-res timesource``.
 
+Memory usage
+------------
+
+:program:`Recursor` keeps all the data it needs in memory.
+The default configuration uses a little more than 1GB when the caches are full.
+Depending on configuration, memory usage can amount to many gigabytes for a large installation.
+
+.. warning::
+   Avoid swapping. The memory access patterns of :program:`Recursor` are random. This means
+   that it will cause trashing (the OS spending lots of time pulling in and writing out memory
+   pages) if :program:`Recursor` uses more physical memory than available and performance will be severely impacted.
+
+Below the memory usage observed for a specific test case are described.
+Please note that depending on OS, version of system libraries, version of the :program:`Recursor`, features used and usage patterns these numbers may vary.
+Test and observe your system to learn more about the memory requirements specific to your case.
+
+The most important subsystems that use memory are:
+
+- The packet cache. The amount of memory used in a test case was about 500 bytes per entry
+- The record cache. The amount of memory used in a test case was about 850 bytes per entry
+- Authoritative zones loaded. Memory usage is dependent on the size and number loaded.
+- RPZ zones loaded. Memory usage is dependent on the size and number loaded.
+- NOD DBs. Memory usage is dependent on specific settings of this subsystem.
+
+An estimate for the memory used by its caches for a :program:`Recursor` having 2 million record cache entries and 1 million packet cache entries is ``2e6 * 850 * + 1e6 * 500 = about 2GB``.
+
 Connection tracking and firewalls
 ---------------------------------
 
 A Recursor under high load puts a severe stress on any stateful (connection tracking) firewall, so much so that the firewall may fail.
 
 Specifically, many Linux distributions run with a connection tracking firewall configured.
-For high load operation (thousands of queries/second), It is advised to either turn off iptables completely, or use the ``NOTRACK`` feature to make sure DNS traffic bypasses the connection tracking.
+For high load operation (thousands of queries/second), It is advised to either turn off iptables completely, or use the ``NOTRACK`` feature to make sure client DNS traffic bypasses the connection tracking.
 
 Sample Linux command lines would be::
 
     ## IPv4
     ## NOTRACK rules for 53/udp, keep in mind that you also need your regular rules for 53/tcp
-    iptables -t raw -I OUTPUT -p udp --dport 53 -j CT --notrack
     iptables -t raw -I OUTPUT -p udp --sport 53 -j CT --notrack
     iptables -t raw -I PREROUTING -p udp --dport 53 -j CT --notrack
-    iptables -t raw -I PREROUTING -p udp --sport 53 -j CT --notrack
     iptables -I INPUT -p udp --dport 53 -j ACCEPT
-    iptables -I INPUT -p udp --sport 53 -j ACCEPT
-    iptables -I OUTPUT -p udp --dport 53 -j ACCEPT
-    iptables -I OUTPUT -p udp --sport 53 -j ACCEPT
 
     ## IPv6
     ## NOTRACK rules for 53/udp, keep in mind that you also need your regular rules for 53/tcp
-    ip6tables -t raw -I OUTPUT -p udp --dport 53 -j CT --notrack
     ip6tables -t raw -I OUTPUT -p udp --sport 53 -j CT --notrack
-    ip6tables -t raw -I PREROUTING -p udp --sport 53 -j CT --notrack
     ip6tables -t raw -I PREROUTING -p udp --dport 53 -j CT --notrack
     ip6tables -I INPUT -p udp --dport 53 -j ACCEPT
-    ip6tables -I INPUT -p udp --sport 53 -j ACCEPT
-    ip6tables -I OUTPUT -p udp --dport 53 -j ACCEPT
-    ip6tables -I OUTPUT -p udp --sport 53 -j ACCEPT
 
 When using FirewallD (Centos 7+ / Red Hat 7+ / Fedora 21+), connection tracking can be disabled via direct rules.
 The settings can be made permanent by using the ``--permanent`` flag::
 
     ## IPv4
     ## NOTRACK rules for 53/udp, keep in mind that you also need your regular rules for 53/tcp
-    firewall-cmd --direct --add-rule ipv4 raw OUTPUT 0 -p udp --dport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv4 raw OUTPUT 0 -p udp --sport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv4 raw PREROUTING 0 -p udp --dport 53 -j CT --notrack
-    firewall-cmd --direct --add-rule ipv4 raw PREROUTING 0 -p udp --sport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv4 filter INPUT 0 -p udp --dport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv4 filter INPUT 0 -p udp --sport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv4 filter OUTPUT 0 -p udp --dport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv4 filter OUTPUT 0 -p udp --sport 53 -j ACCEPT
 
     ## IPv6
     ## NOTRACK rules for 53/udp, keep in mind that you also need your regular rules for 53/tcp
-    firewall-cmd --direct --add-rule ipv6 raw OUTPUT 0 -p udp --dport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv6 raw OUTPUT 0 -p udp --sport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv6 raw PREROUTING 0 -p udp --dport 53 -j CT --notrack
-    firewall-cmd --direct --add-rule ipv6 raw PREROUTING 0 -p udp --sport 53 -j CT --notrack
     firewall-cmd --direct --add-rule ipv6 filter INPUT 0 -p udp --dport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv6 filter INPUT 0 -p udp --sport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv6 filter OUTPUT 0 -p udp --dport 53 -j ACCEPT
-    firewall-cmd --direct --add-rule ipv6 filter OUTPUT 0 -p udp --sport 53 -j ACCEPT
 
 Following the instructions above, you should be able to attain very high query rates.
 
@@ -193,15 +205,15 @@ If you expect few clients, you can increase :ref:`setting-max-concurrent-request
 If you expect many clients and you have increased :ref:`setting-max-tcp-clients`, reduce :ref:`setting-max-concurrent-requests-per-tcp-connection` number to prevent mthread starvation or increase the maximum number of mthreads.
 
 To increase the maximum number of concurrent queries consider increasing  :ref:`setting-max-mthreads`, but be aware that each active mthread consumes more than 200k of memory.
-To see the current number of mthreads in use consult the :ref:`stat-concurrent-queries` metric.
-If a query could not be handled due to mthread shortage, the :ref:`stat-over-capacity-drops` metric is increased.
+To see the current number of mthreads in use consult the :doc:`metrics` ``concurrent-queries`` metric.
+If a query could not be handled due to mthread shortage, the ``over-capacity-drops`` metric is increased.
 
 As an example, if you have typically 200 TCP clients, and the default maximum number of mthreads of 2048, a good number of concurrent requests per TCP connection would be 5. Assuming a worst case packet cache hit ratio, if all 200 TCP clients fill their connections with queries, about half (5 * 200) of the mthreads would be used by incoming TCP queries, leaving the other half for incoming UDP queries.
 Note that starting with version 5.0.0, TCP queries are processed by dedicated TCP thread(s), so the sharing of mthreads between UDP and TCP queries no longer applies.
 
 The total number of incoming TCP connections is limited by :ref:`setting-max-tcp-clients`.
 There is also a per client address limit: :ref:`setting-max-tcp-per-client` to limit the impact of a single client.
-Consult the :ref:`stat-tcp-clients` metric for the current number of TCP connections and the :ref:`stat-tcp-client-overflow` metric to see if client connection attempts were rejected because there were too many existing connections from a single address.
+Consult the :doc:`metrics` ``tcp-clients`` metric for the current number of TCP connections and the ``tcp-client-overflow`` metric to see if client connection attempts were rejected because there were too many existing connections from a single address.
 
 .. _tcp-fast-open-support:
 

@@ -3,7 +3,7 @@ from basicDNSSEC import BasicDNSSEC
 import os
 import subprocess
 
-class basicNSEC3(BasicDNSSEC):
+class basicNSEC3Test(BasicDNSSEC):
     __test__ = True
     _confdir = 'basicNSEC3'
 
@@ -34,10 +34,10 @@ class basicNSEC3(BasicDNSSEC):
         except subprocess.CalledProcessError as e:
             raise AssertionError('%s failed (%d): %s' % (pdnsutilCmd, e.returncode, e.output))
 
-        params = "1 0 100 AABBCCDDEEFF112233"
+        params = "1 0 50 AABBCCDDEEFF112233"
 
         if zone == "optout.example":
-            params = "1 1 100 AABBCCDDEEFF112233"
+            params = "1 1 50 AABBCCDDEEFF112233"
 
         pdnsutilCmd = [os.environ['PDNSUTIL'],
                        '--config-dir=%s' % confdir,

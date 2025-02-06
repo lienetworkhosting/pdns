@@ -1,5 +1,215 @@
 Changelogs for 4.9.X
 ====================
+
+.. changelog::
+  :version: 4.9.9
+  :released: 3rd of October 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14745
+
+    `Security advisory 2024-04 <https://docs.powerdns.com/recursor/security-advisories/powerdns-advisory-2024-04.html>`__: CVE-2024-25590
+
+.. changelog::
+  :version: 4.9.8
+  :released: 23rd of July 2024
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14503
+    :tickets: 14499
+
+    Optimize processing of additionals.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14483
+    :tickets: 14471
+
+    Dump right SOA into dumpFile and report non-relative SOA for includeSOA=true.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14480
+    :tickets: 14404
+
+    Yahttp router: avoid unsigned underflow in route().
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14413
+    :tickets: 14400
+
+    Switch el7 builds to Oracle Linux 7.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 14416
+    :tickets: 14359
+
+    dns.cc: use pdns::views::UnsignedCharView.
+
+.. changelog::
+  :version: 4.9.7
+  :released: 3rd of July 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14380
+    :tickets: 14373
+
+    Remove potential double SOA records if the target of a dns64 name is NODATA.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14352
+    :tickets: 14346
+
+    Fix TCP case for policy tags to not produce cached tags in protobuf messages.
+
+.. changelog::
+  :version: 4.9.6
+  :released: 14th of May 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14093
+    :tickets: 14049
+
+    Do not count RRSIGs using unsupported algorithms toward RRSIGs limit.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13995
+    :tickets: 13984
+
+    Correctly count NSEC3s considered when chasing the closest encloser.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13994
+    :tickets: 13926
+
+    Fix trace=fail regression and add regression test for it.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13993
+
+    Only print Docker config if debug flag is set.
+
+.. changelog::
+  :version: 4.9.5
+  :released: 24th of April 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 14109
+
+    `Security advisory 2024-02 <https://docs.powerdns.com/recursor/security-advisories/powerdns-advisory-2024-02.html>`__: CVE-2024-25583
+
+.. changelog::
+  :version: 4.9.4
+  :released: 7th of March 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13853
+
+    Fix gathering of denial of existence proof for wildcard-expanded names.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13795
+    :tickets: 13788
+
+    Fix the zoneToCache regression introduced by SA 2024-01.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13793
+    :tickets: 13387, 12897
+
+    Update new b-root-server.net addresses in built-in hints.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13792
+    :tickets: 13543
+
+    A single NSEC3 record covering everything is a special case.
+
+.. changelog::
+  :version: 4.9.3
+  :released: 13th of February 2024
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13783
+
+   `Security advisory 2024-01 <https://docs.powerdns.com/recursor/security-advisories/powerdns-advisory-2024-01.html>`__: CVE-2023-50387 and CVE-2023-50868
+
+.. changelog::
+  :version: 4.9.2
+  :released: 8th of November 2023
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13449
+    :tickets: 13383, 13409
+
+    Handle serve stale logic in getRootNXTrust().
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13411
+    :tickets: 13353
+
+    If serving stale, wipe CNAME records from cache when we get a NODATA negative response for them.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13412
+    :tickets: 13408
+
+    Handle stack memory on NetBSD as on OpenBSD.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13286
+    :tickets: 13092
+
+    Prevent two cases of copy of data that can be moved.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13284
+    :tickets: 13210
+
+    Remove Before=nss-lookup.target line from systemd unit file.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13283
+    :tickets: 13278
+
+    Prevent lookups for unsupported qtypes or rcode != 0 to submit refresh tasks.
+
+  .. change::
+    :tags: Improvements
+    :pullreq: 13282
+    :tickets: 13209
+
+    Implement a more fair way to prune the aggressive cache.
+
+  .. change::
+    :tags: Bug Fixes
+    :pullreq: 13176
+    :tickets: 13102
+
+    Do not assume the records are in a particular order when determining if an answer is NODATA.
+
 .. changelog::
   :version: 4.9.1
   :released: 25th of August 2023

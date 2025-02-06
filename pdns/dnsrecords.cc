@@ -167,15 +167,27 @@ boilerplate_conv(OPT,
                  );
 
 #ifdef HAVE_LUA_RECORDS
+
+bool g_luaRecordInsertWhitespace;
+
 string LUARecordContent::getCode() const
 {
   // in d_code, series of "part1" "part2"
   vector<string> parts;
   stringtok(parts, d_code, "\"");
   string ret;
-  for(const auto& p : parts) {
-    ret += p;
-    ret.append(1, ' ');
+  if (g_luaRecordInsertWhitespace) { // default before 5.0
+    for(const auto& part : parts) {
+      ret += part;
+      ret.append(1, ' ');
+    }
+  }
+  else { // default since 5.0
+    for(const auto& part : parts) {
+      if (part != " ") {
+        ret += part;
+      }
+    }
   }
   return ret;
 }
@@ -360,7 +372,7 @@ boilerplate_conv(SMIMEA,
                  conv.xfrHexBlob(d_cert, true);
                  )
 
-DSRecordContent::DSRecordContent() {}
+DSRecordContent::DSRecordContent() = default;
 boilerplate_conv(DS,
                  conv.xfr16BitInt(d_tag);
                  conv.xfr8BitInt(d_algorithm);
@@ -368,7 +380,7 @@ boilerplate_conv(DS,
                  conv.xfrHexBlob(d_digest, true); // keep reading across spaces
                  )
 
-CDSRecordContent::CDSRecordContent() {}
+CDSRecordContent::CDSRecordContent() = default;
 boilerplate_conv(CDS,
                  conv.xfr16BitInt(d_tag);
                  conv.xfr8BitInt(d_algorithm);
@@ -376,7 +388,7 @@ boilerplate_conv(CDS,
                  conv.xfrHexBlob(d_digest, true); // keep reading across spaces
                  )
 
-DLVRecordContent::DLVRecordContent() {}
+DLVRecordContent::DLVRecordContent() = default;
 boilerplate_conv(DLV,
                  conv.xfr16BitInt(d_tag);
                  conv.xfr8BitInt(d_algorithm);
@@ -403,7 +415,7 @@ boilerplate_conv(RRSIG,
                  conv.xfrBlob(d_signature);
                  )
 
-RRSIGRecordContent::RRSIGRecordContent() {}
+RRSIGRecordContent::RRSIGRecordContent() = default;
 
 boilerplate_conv(DNSKEY,
                  conv.xfr16BitInt(d_flags);
@@ -411,7 +423,7 @@ boilerplate_conv(DNSKEY,
                  conv.xfr8BitInt(d_algorithm);
                  conv.xfrBlob(d_key);
                  )
-DNSKEYRecordContent::DNSKEYRecordContent() {}
+DNSKEYRecordContent::DNSKEYRecordContent() = default;
 
 boilerplate_conv(CDNSKEY,
                  conv.xfr16BitInt(d_flags);
@@ -419,7 +431,7 @@ boilerplate_conv(CDNSKEY,
                  conv.xfr8BitInt(d_algorithm);
                  conv.xfrBlob(d_key);
                  )
-CDNSKEYRecordContent::CDNSKEYRecordContent() {}
+CDNSKEYRecordContent::CDNSKEYRecordContent() = default;
 
 boilerplate_conv(RKEY,
                  conv.xfr16BitInt(d_flags);
@@ -427,7 +439,7 @@ boilerplate_conv(RKEY,
                  conv.xfr8BitInt(d_algorithm);
                  conv.xfrBlob(d_key);
                  )
-RKEYRecordContent::RKEYRecordContent() {}
+RKEYRecordContent::RKEYRecordContent() = default;
 
 boilerplate_conv(NID,
                  conv.xfr16BitInt(d_preference);
@@ -446,7 +458,7 @@ boilerplate_conv(LP,
                  conv.xfrName(d_fqdn, false);)
 
 /* EUI48 start */
-void EUI48RecordContent::report()
+void EUI48RecordContent::report(const ReportIsOnlyCallableByReportAllTypes& /* unused */)
 {
   regist(1, QType::EUI48, &make, &make, "EUI48");
 }
@@ -490,7 +502,7 @@ string EUI48RecordContent::getZoneRepresentation(bool /* noDot */) const
 
 /* EUI64 start */
 
-void EUI64RecordContent::report()
+void EUI64RecordContent::report(const ReportIsOnlyCallableByReportAllTypes& /* unused */)
 {
   regist(1, QType::EUI64, &make, &make, "EUI64");
 }
@@ -536,7 +548,7 @@ string EUI64RecordContent::getZoneRepresentation(bool /* noDot */) const
 
 /* APL start */
 /* https://tools.ietf.org/html/rfc3123 */
-void APLRecordContent::report()
+void APLRecordContent::report(const ReportIsOnlyCallableByReportAllTypes& /* unused */)
 {
   regist(1, QType::APL, &make, &make, "APL");
 }
@@ -768,7 +780,7 @@ void SVCBBaseRecordContent::setHints(const SvcParam::SvcParamKey &key, const std
   try {
     auto newParam = SvcParam(key, std::move(h));
     d_params.erase(p);
-    d_params.insert(newParam);
+    d_params.insert(std::move(newParam));
   } catch (...) {
     // XXX maybe we should SERVFAIL instead?
     return;
@@ -800,11 +812,7 @@ SvcParam SVCBBaseRecordContent::getParam(const SvcParam::SvcParamKey &key) const
 }
 
 set<SvcParam>::const_iterator SVCBBaseRecordContent::getParamIt(const SvcParam::SvcParamKey &key) const {
-  auto p = std::find_if(d_params.begin(), d_params.end(),
-      [&key](const SvcParam &param) {
-        return param.getKey() == key;
-      });
-  return p;
+  return std::find(d_params.begin(), d_params.end(), key);
 }
 
 std::shared_ptr<SVCBBaseRecordContent> SVCBRecordContent::clone() const
@@ -872,18 +880,18 @@ bool getEDNSOpts(const MOADNSParser& mdp, EDNSOpts* eo)
   eo->d_extFlags=0;
   if(mdp.d_header.arcount && !mdp.d_answers.empty()) {
     for(const MOADNSParser::answers_t::value_type& val :  mdp.d_answers) {
-      if(val.first.d_place == DNSResourceRecord::ADDITIONAL && val.first.d_type == QType::OPT) {
-        eo->d_packetsize=val.first.d_class;
+      if(val.d_place == DNSResourceRecord::ADDITIONAL && val.d_type == QType::OPT) {
+        eo->d_packetsize=val.d_class;
 
         EDNS0Record stuff;
-        uint32_t ttl=ntohl(val.first.d_ttl);
+        uint32_t ttl=ntohl(val.d_ttl);
         static_assert(sizeof(EDNS0Record) == sizeof(uint32_t), "sizeof(EDNS0Record) must match sizeof(uint32_t)");
         memcpy(&stuff, &ttl, sizeof(stuff));
 
         eo->d_extRCode=stuff.extRCode;
         eo->d_version=stuff.version;
         eo->d_extFlags = ntohs(stuff.extFlags);
-        auto orc = getRR<OPTRecordContent>(val.first);
+        auto orc = getRR<OPTRecordContent>(val);
         if(orc == nullptr)
           return false;
         orc->getData(eo->d_options);
@@ -894,85 +902,91 @@ bool getEDNSOpts(const MOADNSParser& mdp, EDNSOpts* eo)
   return false;
 }
 
-void reportBasicTypes()
+static void reportBasicTypes(const ReportIsOnlyCallableByReportAllTypes& guard)
 {
-  ARecordContent::report();
-  AAAARecordContent::report();
-  NSRecordContent::report();
-  CNAMERecordContent::report();
-  MXRecordContent::report();
-  SOARecordContent::report();
-  SRVRecordContent::report();
-  PTRRecordContent::report();
+  ARecordContent::report(guard);
+  AAAARecordContent::report(guard);
+  NSRecordContent::report(guard);
+  CNAMERecordContent::report(guard);
+  MXRecordContent::report(guard);
+  SOARecordContent::report(guard);
+  SRVRecordContent::report(guard);
+  PTRRecordContent::report(guard);
   DNSRecordContent::regist(QClass::CHAOS, QType::TXT, &TXTRecordContent::make, &TXTRecordContent::make, "TXT");
-  TXTRecordContent::report();
+  TXTRecordContent::report(guard);
 #ifdef HAVE_LUA_RECORDS
-  LUARecordContent::report();
+  LUARecordContent::report(guard);
 #endif
   DNSRecordContent::regist(QClass::IN, QType::ANY, nullptr, nullptr, "ANY");
   DNSRecordContent::regist(QClass::IN, QType::AXFR, nullptr, nullptr, "AXFR");
   DNSRecordContent::regist(QClass::IN, QType::IXFR, nullptr, nullptr, "IXFR");
 }
 
-void reportOtherTypes()
+static void reportOtherTypes(const ReportIsOnlyCallableByReportAllTypes& guard)
 {
-   MBRecordContent::report();
-   MGRecordContent::report();
-   MRRecordContent::report();
-   AFSDBRecordContent::report();
-   DNAMERecordContent::report();
+   MBRecordContent::report(guard);
+   MGRecordContent::report(guard);
+   MRRecordContent::report(guard);
+   AFSDBRecordContent::report(guard);
+   DNAMERecordContent::report(guard);
 #if !defined(RECURSOR)
-   ALIASRecordContent::report();
+   ALIASRecordContent::report(guard);
 #endif
-   SPFRecordContent::report();
-   NAPTRRecordContent::report();
-   KXRecordContent::report();
-   LOCRecordContent::report();
-   ENTRecordContent::report();
-   HINFORecordContent::report();
-   RPRecordContent::report();
-   KEYRecordContent::report();
-   DNSKEYRecordContent::report();
-   DHCIDRecordContent::report();
-   CDNSKEYRecordContent::report();
-   RKEYRecordContent::report();
-   RRSIGRecordContent::report();
-   DSRecordContent::report();
-   CDSRecordContent::report();
-   SSHFPRecordContent::report();
-   CERTRecordContent::report();
-   NSECRecordContent::report();
-   NSEC3RecordContent::report();
-   NSEC3PARAMRecordContent::report();
-   TLSARecordContent::report();
-   SMIMEARecordContent::report();
-   OPENPGPKEYRecordContent::report();
-   SVCBRecordContent::report();
-   HTTPSRecordContent::report();
-   DLVRecordContent::report();
+   SPFRecordContent::report(guard);
+   NAPTRRecordContent::report(guard);
+   KXRecordContent::report(guard);
+   LOCRecordContent::report(guard);
+   ENTRecordContent::report(guard);
+   HINFORecordContent::report(guard);
+   RPRecordContent::report(guard);
+   KEYRecordContent::report(guard);
+   DNSKEYRecordContent::report(guard);
+   DHCIDRecordContent::report(guard);
+   CDNSKEYRecordContent::report(guard);
+   RKEYRecordContent::report(guard);
+   RRSIGRecordContent::report(guard);
+   DSRecordContent::report(guard);
+   CDSRecordContent::report(guard);
+   SSHFPRecordContent::report(guard);
+   CERTRecordContent::report(guard);
+   NSECRecordContent::report(guard);
+   NSEC3RecordContent::report(guard);
+   NSEC3PARAMRecordContent::report(guard);
+   TLSARecordContent::report(guard);
+   SMIMEARecordContent::report(guard);
+   OPENPGPKEYRecordContent::report(guard);
+   SVCBRecordContent::report(guard);
+   HTTPSRecordContent::report(guard);
+   DLVRecordContent::report(guard);
    DNSRecordContent::regist(QClass::ANY, QType::TSIG, &TSIGRecordContent::make, &TSIGRecordContent::make, "TSIG");
    DNSRecordContent::regist(QClass::ANY, QType::TKEY, &TKEYRecordContent::make, &TKEYRecordContent::make, "TKEY");
-   //TSIGRecordContent::report();
-   OPTRecordContent::report();
-   EUI48RecordContent::report();
-   EUI64RecordContent::report();
-   MINFORecordContent::report();
-   URIRecordContent::report();
-   CAARecordContent::report();
-   APLRecordContent::report();
-   IPSECKEYRecordContent::report();
-   CSYNCRecordContent::report();
-   NIDRecordContent::report();
-   L32RecordContent::report();
-   L64RecordContent::report();
-   LPRecordContent::report();
-   ZONEMDRecordContent::report();
+   //TSIGRecordContent::report(guard);
+   OPTRecordContent::report(guard);
+   EUI48RecordContent::report(guard);
+   EUI64RecordContent::report(guard);
+   MINFORecordContent::report(guard);
+   URIRecordContent::report(guard);
+   CAARecordContent::report(guard);
+   APLRecordContent::report(guard);
+   IPSECKEYRecordContent::report(guard);
+   CSYNCRecordContent::report(guard);
+   NIDRecordContent::report(guard);
+   L32RecordContent::report(guard);
+   L64RecordContent::report(guard);
+   LPRecordContent::report(guard);
+   ZONEMDRecordContent::report(guard);
 }
+
+struct ReportIsOnlyCallableByReportAllTypes
+{
+};
 
 void reportAllTypes()
 {
-  reportBasicTypes();
-  reportOtherTypes();
+  ReportIsOnlyCallableByReportAllTypes guard;
+  reportBasicTypes(guard);
+  reportOtherTypes(guard);
+  DNSRecordContent::lock();
 }
 
 ComboAddress getAddr(const DNSRecord& dr, uint16_t defport)

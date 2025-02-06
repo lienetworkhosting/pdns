@@ -5,7 +5,8 @@ set -e
 ARCH=$(arch)
 
 # Default version
-RUST_VERSION=rust-1.72.0-$ARCH-unknown-linux-gnu
+RUST_VERSION_NUMBER=$(jq -r .version < rust.json)
+RUST_VERSION=rust-$RUST_VERSION_NUMBER-$ARCH-unknown-linux-gnu
 
 if [ $# -ge 1 ]; then
     RUST_VERSION=$1
@@ -15,7 +16,8 @@ fi
 SITE=https://downloads.powerdns.com/rust
 RUST_TARBALL=$RUST_VERSION.tar.gz
 
-SHA256SUM_x86_64=f2bbe23e685852104fd48d0e34ac981b0917e76c62cfcd6d0ac5283e4710c7b9
+SHA256SUM_x86_64=$(jq -r .SHA256SUM_x86_64 < rust.json)
+SHA256SUM_aarch64=$(jq -r .SHA256SUM_aarch64 < rust.json)
 
 NAME=SHA256SUM_$ARCH
 eval VALUE=\$$NAME
@@ -33,13 +35,20 @@ fi
 # 5. Make $RUST_TARBALL available from https://downloads.powerdns.com/rust
 #
 cd /tmp
-echo $0: Downloading $RUST_TARBALL
-
-curl -f -o $RUST_TARBALL $SITE/$RUST_TARBALL
+if [ -f $RUST_TARBALL ]; then
+    echo $0: Found existing $RUST_TARBALL
+else
+    echo $0: Downloading $RUST_TARBALL
+    rm -f $RUST_TARBALL
+    curl --silent --show-error --fail --output $RUST_TARBALL $SITE/$RUST_TARBALL
+fi
+echo $0: Expecting hash $VALUE
 # Line below should echo two spaces between digest and name
 echo $VALUE"  "$RUST_TARBALL | sha256sum -c -
+rm -rf $RUST_VERSION
 tar -zxf $RUST_TARBALL
 cd $RUST_VERSION
-./install.sh --prefix=/usr
+./install.sh --prefix=/usr --components=rustc,rust-std-$ARCH-unknown-linux-gnu,cargo
+
 cd ..
-rm -rf $RUST_TARBALL $RUST_VERSION
+rm -rf $RUST_VERSION

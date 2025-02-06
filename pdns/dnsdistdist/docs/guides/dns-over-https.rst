@@ -1,6 +1,9 @@
 DNS-over-HTTPS (DoH)
 ====================
 
+.. note::
+  This guide is about DNS over HTTP/1 and DNS over HTTP/2. For DNS over HTTP/3, please see :doc:`dns-over-http3`
+
 :program:`dnsdist` supports DNS-over-HTTPS (DoH, standardized in RFC 8484) for incoming queries since 1.4.0, and for outgoing queries since 1.7.0.
 To see if the installation supports this, run ``dnsdist --version``.
 If the output shows ``dns-over-https(DOH)`` (``dns-over-https(h2o nghttp2)``, ``dns-over-https(h2o)`` or ``dns-over-https(nghttp2)`` since 1.9.0) , incoming DNS-over-HTTPS is supported. If ``outgoing-dns-over-https(nghttp2)`` shows up then outgoing DNS-over-HTTPS is supported.
@@ -31,9 +34,37 @@ A more complicated (and more realistic) example is when you want to indicate met
 
   addDOHLocal('2001:db8:1:f00::1', '/etc/ssl/certs/example.com.pem', '/etc/ssl/private/example.com.key', "/", {customResponseHeaders={["link"]="<https://example.com/policy.html> rel=\\"service-meta\\"; type=\\"text/html\\""}})
 
+Or in ``yaml``:
+
+.. code-block:: yaml
+
+  - listen_address: "2001:db8:1:f00::1"
+    protocol: "DoH"
+    tls:
+      certificates:
+        - certificate: "/etc/ssl/certs/example.com.pem"
+          key: "/etc/ssl/private/example.com.key"
+    doh:
+      provider: "nghttp2"
+      paths:
+        - "/"
+      custom_response_headers:
+        - key: "link"
+          value: "<https://example.com/policy.html> rel=\\"service-meta\\"; type=\\"text/html\\""
+
+
 A particular attention should be taken to the permissions of the certificate and key files. Many ACME clients used to get and renew certificates, like CertBot, set permissions assuming that services are started as root, which is no longer true for dnsdist as of 1.5.0. For that particular case, making a copy of the necessary files in the /etc/dnsdist directory is advised, using for example CertBot's ``--deploy-hook`` feature to copy the files with the right permissions after a renewal.
 
 More information about sessions management can also be found in :doc:`../advanced/tls-sessions-management`.
+
+Advertising DNS over HTTP/3 support
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If DNS over HTTP/3 is also enabled in the configuration via :func:`addDOH3Local` (see :doc:`dns-over-http3` for more information), it might be useful to advertise this support via the ``Alt-Svc`` header::
+
+  addDOHLocal('2001:db8:1:f00::1', '/etc/ssl/certs/example.com.pem', '/etc/ssl/private/example.com.key', "/dns", {customResponseHeaders={["alt-svc"]="h3=\":443\""}})
+
+This will advertise that HTTP/3 is available on the same IP, port UDP/443.
 
 Custom responses
 ^^^^^^^^^^^^^^^^
@@ -62,7 +93,24 @@ preferred library for incoming DoH support, because ``h2o`` has unfortunately re
 (see https://github.com/h2o/h2o/issues/3230). While we took great care to make the migration as painless as possible, ``h2o`` supported HTTP/1 while ``nghttp2``
 does not. This is not an issue for actual DNS over HTTPS clients that support HTTP/2, but might be one in setups running dnsdist behind a reverse-proxy that
 does not support HTTP/2, like nginx. We do not plan on implementing HTTP/1, and recommend using HTTP/2 between the reverse-proxy and dnsdist for performance reasons.
-For nginx in particular, a possible work-around is to use the `grpc_pass <http://nginx.org/r/grpc_pass>`_ directive as suggested in their `bug tracker <https://trac.nginx.org/nginx/ticket/1875>`_.
+
+For nginx in particular, a possible work-around is to use the `grpc_pass <http://nginx.org/r/grpc_pass>`_ directive as suggested in their `bug tracker <https://trac.nginx.org/nginx/ticket/1875>`_ e.g.::
+
+  location /dns-query {
+    set $upstream_app dnsdist;
+    set $upstream_port 443;
+    set $upstream_proto grpcs;
+    grpc_pass $upstream_proto://$upstream_app:$upstream_port;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Protocol $scheme;
+    proxy_set_header Range $http_range;
+    proxy_set_header If-Range $http_if_range;
+  }
 
 Internal design
 ^^^^^^^^^^^^^^^
@@ -98,6 +146,18 @@ That support can be enabled via the ``dohPath`` parameter of the :func:`newServe
 .. code-block:: lua
 
   newServer({address="[2001:DB8::1]:443", tls="openssl", subjectName="doh.powerdns.com", dohPath="/dns-query", validateCertificates=true})
+
+.. code-block:: yaml
+
+  backends:
+    - address: "127.0.0.1:%d"
+      protocol: "DoH"
+      tls:
+        provider: "openssl"
+        validate_certificate: true
+        subject_name: "doh.powerdns.com"
+      doh:
+        path: "/dns-query"
 
 
 Internal design

@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 
 #include "lock.hh"
@@ -34,11 +35,11 @@ namespace dnsdist::metrics
 {
 using Error = std::string;
 
-[[nodiscard]] std::optional<Error> declareCustomMetric(const std::string& name, const std::string& type, const std::string& description, std::optional<std::string> customName);
-[[nodiscard]] std::variant<uint64_t, Error> incrementCustomCounter(const std::string_view& name, uint64_t step);
-[[nodiscard]] std::variant<uint64_t, Error> decrementCustomCounter(const std::string_view& name, uint64_t step);
-[[nodiscard]] std::variant<double, Error> setCustomGauge(const std::string_view& name, const double value);
-[[nodiscard]] std::variant<double, Error> getCustomMetric(const std::string_view& name);
+[[nodiscard]] std::optional<Error> declareCustomMetric(const std::string& name, const std::string& type, const std::string& description, std::optional<std::string> customName, bool withLabels);
+[[nodiscard]] std::variant<uint64_t, Error> incrementCustomCounter(const std::string_view& name, uint64_t step, const std::unordered_map<std::string, std::string>& labels);
+[[nodiscard]] std::variant<uint64_t, Error> decrementCustomCounter(const std::string_view& name, uint64_t step, const std::unordered_map<std::string, std::string>& labels);
+[[nodiscard]] std::variant<double, Error> setCustomGauge(const std::string_view& name, const double value, const std::unordered_map<std::string, std::string>& labels);
+[[nodiscard]] std::variant<double, Error> getCustomMetric(const std::string_view& name, const std::unordered_map<std::string, std::string>& labels);
 
 using pdns::stat_t;
 
@@ -75,24 +76,28 @@ struct Stats
   stat_t dohQueryPipeFull{0};
   stat_t dohResponsePipeFull{0};
   stat_t doqResponsePipeFull{0};
+  stat_t doh3ResponsePipeFull{0};
   stat_t outgoingDoHQueryPipeFull{0};
   stat_t proxyProtocolInvalid{0};
   stat_t tcpQueryPipeFull{0};
   stat_t tcpCrossProtocolQueryPipeFull{0};
   stat_t tcpCrossProtocolResponsePipeFull{0};
-  double latencyAvg100{0}, latencyAvg1000{0}, latencyAvg10000{0}, latencyAvg1000000{0};
-  double latencyTCPAvg100{0}, latencyTCPAvg1000{0}, latencyTCPAvg10000{0}, latencyTCPAvg1000000{0};
-  double latencyDoTAvg100{0}, latencyDoTAvg1000{0}, latencyDoTAvg10000{0}, latencyDoTAvg1000000{0};
-  double latencyDoHAvg100{0}, latencyDoHAvg1000{0}, latencyDoHAvg10000{0}, latencyDoHAvg1000000{0};
+  pdns::stat_double_t latencyAvg100{0}, latencyAvg1000{0}, latencyAvg10000{0}, latencyAvg1000000{0};
+  pdns::stat_double_t latencyTCPAvg100{0}, latencyTCPAvg1000{0}, latencyTCPAvg10000{0}, latencyTCPAvg1000000{0};
+  pdns::stat_double_t latencyDoTAvg100{0}, latencyDoTAvg1000{0}, latencyDoTAvg10000{0}, latencyDoTAvg1000000{0};
+  pdns::stat_double_t latencyDoHAvg100{0}, latencyDoHAvg1000{0}, latencyDoHAvg10000{0}, latencyDoHAvg1000000{0};
+  pdns::stat_double_t latencyDoQAvg100{0}, latencyDoQAvg1000{0}, latencyDoQAvg10000{0}, latencyDoQAvg1000000{0};
+  pdns::stat_double_t latencyDoH3Avg100{0}, latencyDoH3Avg1000{0}, latencyDoH3Avg10000{0}, latencyDoH3Avg1000000{0};
   using statfunction_t = std::function<uint64_t(const std::string&)>;
-  using entry_t = std::variant<stat_t*, pdns::stat_t_trait<double>*, double*, statfunction_t>;
-  struct EntryPair
+  using entry_t = std::variant<stat_t*, pdns::stat_double_t*, statfunction_t>;
+  struct EntryTriple
   {
     std::string d_name;
+    std::string d_labels;
     entry_t d_value;
   };
 
-  SharedLockGuarded<std::vector<EntryPair>> entries;
+  SharedLockGuarded<std::vector<EntryTriple>> entries;
 };
 
 extern struct Stats g_stats;

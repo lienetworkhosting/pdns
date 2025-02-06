@@ -60,7 +60,8 @@ public:
  
   UeberBackend *getBackend();
 
-  int trySuperMasterSynchronous(const DNSPacket& p, const DNSName& tsigkeyname);
+  int tryAutoPrimarySynchronous(const DNSPacket& p, const DNSName& tsigkeyname);
+  bool checkForCorrectTSIG(const DNSPacket& packet, DNSName* tsigkeyname, string* secret, TSIGRecordContent* tsigContent);
   static NetmaskGroup s_allowNotifyFrom;
   static set<string> s_forwardNotify;
   static bool s_SVCAutohints;
@@ -68,7 +69,7 @@ public:
   static const std::shared_ptr<CDSRecordContent> s_deleteCDSContent;
 
 private:
-  int trySuperMaster(const DNSPacket& p, const DNSName& tsigkeyname);
+  int tryAutoPrimary(const DNSPacket& p, const DNSName& tsigkeyname);
   int processNotify(const DNSPacket& );
   void addRootReferral(DNSPacket& r);
   int doChaosRequest(const DNSPacket& p, std::unique_ptr<DNSPacket>& r, DNSName &target) const;
@@ -113,6 +114,7 @@ private:
   bool d_logDNSDetails;
   bool d_doDNAME;
   bool d_doExpandALIAS;
+  bool d_doResolveAcrossZones;
   bool d_dnssec{false};
   SOAData d_sd;
   std::unique_ptr<AuthLua4> d_pdl;

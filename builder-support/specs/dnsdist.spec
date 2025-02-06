@@ -21,6 +21,12 @@ BuildRequires: systemd-devel
 BuildRequires: boost169-devel
 %else
 BuildRequires: boost-devel
+BuildRequires: python3-pyyaml
+%endif
+
+%if 0%{?rhel} >= 8
+BuildRequires: clang
+BuildRequires: lld
 %endif
 
 %if 0%{?rhel} >= 7 || 0%{?amzn} == 2023
@@ -55,6 +61,10 @@ Requires(pre): shadow-utils
 BuildRequires: fstrm-devel
 %systemd_requires
 %endif
+%if ( "%{_arch}" != "aarch64" && 0%{?rhel} >= 8 ) || ( "%{_arch}" == "aarch64" && 0%{?rhel} >= 9 )
+BuildRequires: libbpf-devel
+BuildRequires: libxdp-devel
+%endif
 
 %description
 dnsdist is a high-performance DNS loadbalancer that is scriptable in Lua.
@@ -66,6 +76,14 @@ dnsdist is a high-performance DNS loadbalancer that is scriptable in Lua.
 %if 0%{?rhel} < 8
 export CPPFLAGS=-I/usr/include/boost169
 export LDFLAGS=-L/usr/lib64/boost169
+%endif
+%if 0%{?rhel} >= 8
+# We need to build with LLVM/clang to be able to use LTO, since we are linking against a static Rust library built with LLVM
+export CC=clang
+export CXX=clang++
+# build-id SHA1 prevents an issue with the debug symbols ("export: `-Wl,--build-id=sha1': not a valid identifier")
+# and the --no-as-needed -ldl an issue with the dlsym not being found ("ld.lld: error: undefined symbol: dlsym eferenced by weak.rs:142 (library/std/src/sys/pal/unix/weak.rs:142) [...] in archive ./dnsdist-rust-lib/rust/libdnsdist_rust.a)
+export LDFLAGS="-fuse-ld=lld -Wl,--build-id=sha1 -Wl,--no-as-needed -ldl"
 %endif
 
 export AR=gcc-ar
@@ -88,20 +106,26 @@ export RANLIB=gcc-ranlib
   --enable-systemd --with-systemd=%{_unitdir} \
   --without-net-snmp
 %endif
-%if 0%{?rhel} >= 7
-  --enable-dnscrypt \
+%if 0%{?rhel} >= 7 || 0%{?amzn} == 2023
   --enable-dnstap \
   --enable-dns-over-https \
   --enable-systemd --with-systemd=%{_unitdir} \
   --with-gnutls \
   --with-libcap \
-  --with-libsodium \
   --with-lua=%{lua_implementation} \
-  --with-net-snmp \
   --with-re2 \
-%if 0%{?rhel} >= 8
+%if 0%{?amzn} != 2023
+  --enable-dnscrypt \
+  --with-libsodium \
+  --with-net-snmp \
+%endif
+%if 0%{?rhel} >= 8 || 0%{?amzn} == 2023
   --enable-dns-over-quic \
+  --enable-dns-over-http3 \
   --with-quiche \
+%endif
+%if 0%{?rhel} >= 8
+  --enable-yaml \
 %endif
   PKG_CONFIG_PATH=/usr/lib/pkgconfig:/opt/lib64/pkgconfig
 %endif
@@ -114,17 +138,23 @@ make %{?_smp_mflags} check || (cat test-suite.log && false)
 %install
 %make_install
 install -d %{buildroot}/%{_sysconfdir}/dnsdist
-%if 0%{?rhel} >= 8
+%if 0%{?rhel} >= 8 || 0%{?amzn} == 2023
 install -Dm644 /usr/lib/libdnsdist-quiche.so %{buildroot}/%{_libdir}/libdnsdist-quiche.so
 %endif
 %{__mv} %{buildroot}%{_sysconfdir}/dnsdist/dnsdist.conf-dist %{buildroot}%{_sysconfdir}/dnsdist/dnsdist.conf
 chmod 0640 %{buildroot}/%{_sysconfdir}/dnsdist/dnsdist.conf
 
+%{__install } -d %{buildroot}/%{_sharedstatedir}/%{name}
+
 %pre
 getent group dnsdist >/dev/null || groupadd -r dnsdist
 getent passwd dnsdist >/dev/null || \
-	useradd -r -g dnsdist -d / -s /sbin/nologin \
+	useradd -r -g dnsdist -d /var/lib/dnsdist -s /sbin/nologin \
 	-c "dnsdist user" dnsdist
+# Change home directory to /var/lib/dnsdist if needed
+if [[ $(getent passwd dnsdist | cut -d: -f6) == "/" ]]; then
+    usermod -d /var/lib/dnsdist dnsdist
+fi
 exit 0
 
 %post
@@ -156,10 +186,12 @@ systemctl daemon-reload ||:
 %{!?_licensedir:%global license %%doc}
 %doc README.md
 %{_bindir}/*
-%if 0%{?rhel} >= 8
+%if 0%{?rhel} >= 8 || 0%{?amzn} == 2023
+%define __requires_exclude libdnsdist-quiche\\.so
 %{_libdir}/libdnsdist-quiche.so
 %endif
 %{_mandir}/man1/*
 %dir %{_sysconfdir}/dnsdist
 %attr(-, root, dnsdist) %config(noreplace) %{_sysconfdir}/%{name}/dnsdist.conf
+%dir %attr(-,dnsdist,dnsdist) %{_sharedstatedir}/%{name}
 %{_unitdir}/dnsdist*

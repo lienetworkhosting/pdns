@@ -2,6 +2,13 @@
 name: 'Test package building for specific distributions'
 
 on:
+  workflow_call:
+    inputs:
+      branch-name:
+        description: 'Checkout to a specific branch'
+        required: true
+        default: ''
+        type: string
   schedule:
     - cron: '0 1 * * *'
 
@@ -9,39 +16,57 @@ permissions: # least privileges, see https://docs.github.com/en/actions/using-wo
   contents: read
 
 jobs:
+  prepare:
+    name: generate runner list
+    runs-on: ubuntu-22.04
+    outputs:
+      runnerlist: ${{ steps.get-runnerlist.outputs.runnerlist }}
+    steps:
+      - run: sudo apt-get update && sudo apt-get -y install jo
+      - id: get-runnerlist
+        run: echo "runnerlist=$(jo -a ubuntu-22.04 ${{ vars.ARM64_USE_UBICLOUD == '1' && 'ubicloud-standard-2-arm' || '' }})" >> "$GITHUB_OUTPUT"
+
   build:
     name: build.sh
     if: ${{ vars.SCHEDULED_JOBS_BUILDER }}
-    # on a ubuntu-20.04 VM
-    runs-on: ubuntu-20.04
+    needs: prepare
+    runs-on: ${{ matrix.runner-os }}
     strategy:
       matrix:
         product: ['authoritative', 'recursor', 'dnsdist']
         os:
-          - centos-7
+          - el-7
           - el-8
-          - centos-8-stream
           - centos-9-stream
-          - ubuntu-lunar
-          - ubuntu-mantic
+          - ubuntu-noble
+          - ubuntu-oracular
           - debian-bookworm
           - debian-trixie
           - amazon-2023
+        runner-os: ${{ fromJson(needs.prepare.outputs.runnerlist )}}
+        exclude:
+          - os: el-7
+            runner-os: ubicloud-standard-2-arm
       fail-fast: false
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # for correct version numbers
           submodules: recursive
+          ref: ${{ inputs.branch-name }}
       # this builds packages and runs our unit test (make check)
       - run: builder/build.sh -v -m ${{ matrix.product }} ${{ matrix.os }}
       - name: Get version number
         run: |
           echo "version=$(readlink builder/tmp/latest)" >> $GITHUB_OUTPUT
         id: getversion
+      - name: Get target architecture
+        run: |
+          echo "target-arch=$(uname -m)" >> $GITHUB_OUTPUT
+        id: getarch
       - name: Upload packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.product }}-${{ matrix.os }}-${{ steps.getversion.outputs.version }}
+          name: ${{ matrix.product }}-${{ matrix.os }}-${{ steps.getversion.outputs.version }}-${{ steps.getarch.outputs.target-arch }}
           path: built_pkgs/
           retention-days: 7

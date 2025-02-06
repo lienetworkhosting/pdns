@@ -108,10 +108,17 @@ Store DNSSEC keys and metadata storage in another backend. See the
 Setting this option to ``yes`` makes PowerDNS ignore out of zone records
 when loading zone files.
 
-.. _setting-bind-supermasters:
+Autoprimary support (experimental)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``bind-supermasters``
-~~~~~~~~~~~~~~~~~~~~~
+.. _setting-bind-autoprimaries:
+
+``bind-autoprimaries``
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionchanged:: 4.9.0
+
+  This was called ``bind-supermasters`` before 4.9.0.
 
 Specifies file where to read list of autoprimaries.
 BIND backend only checks IP address of primary server.
@@ -120,19 +127,27 @@ The file must contain one IP and account per line, separated by whitespace.
 
 BIND backend can only read this file, not write it.
 
-.. _setting-bind-supermaster-config:
+.. _setting-bind-autoprimary-config:
 
-``bind-supermaster-config``
+``bind-autoprimary-config``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionchanged:: 4.9.0
+
+  This was called ``bind-supermaster-config`` before 4.9.0.
 
 When a new zone is configured via the autosecondary mechanism, bindbackend *writes* a zone entry to this file.
 
 Your ``bind-config`` file should have an ``include`` statement to make sure this file is read on startup.
 
-.. _setting-bind-supermaster-destdir:
+.. _setting-bind-autoprimary-destdir:
 
-``bind-supermaster-destdir``
+``bind-autoprimary-destdir``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionchanged:: 4.9.0
+
+  This was called ``bind-supermaster-destdir`` before 4.9.0.
 
 Each new zone configured via the autosecondary mechanism gets a zone file in this directory.
 This directory must be writable.
@@ -151,16 +166,16 @@ not yet available, to prevent incomplete answers.
 
 Reloading is currently done only when a request (or zone transfer) for a
 zone comes in, and then only after :ref:`setting-bind-check-interval`
-seconds have passed after the last check. If a change occurred, access
+seconds have passed since the last check. If a change occurred, access
 to the zone is disabled, the file is reloaded, access is restored, and
 the question is answered. For regular zones, reloading is fast enough to
 answer the question which lead to the reload within the DNS timeout.
 
 If :ref:`setting-bind-check-interval` is specified as
-zero, no checks will be performed until the ``pdns_control reload`` is
-given.
+zero, no checks will be performed until the ``pdns_control reload`` command
+is issued.
 
-Please note that also the :ref:`setting-slave-cycle-interval` setting
+Please note that also the :ref:`setting-xfr-cycle-interval` setting
 controls how often a master would notify a slave about changes.
 Especially in 'hidden master' configurations, where servers usually
 don't receive regular queries, you may want to lower that setting to a
@@ -204,7 +219,7 @@ Lists all zones that have problems, and what those problems are.
 ``bind-reload-now <domain>``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Reloads a zone from disk NOW, reporting back results.
+Reloads a zone from disk immediately, reporting back results.
 
 ``rediscover``
 ~~~~~~~~~~~~~~

@@ -133,6 +133,7 @@ void putDefaultHintsIntoCache(time_t now, std::vector<DNSRecord>& nsvec)
   arr.d_type = QType::A;
   aaaarr.d_type = QType::AAAA;
   nsrr.d_type = QType::NS;
+  // coverity[store_truncates_time_t]
   arr.d_ttl = aaaarr.d_ttl = nsrr.d_ttl = now + 3600000;
 
   string templ = "a.root-servers.net.";
@@ -176,7 +177,7 @@ static SyncRes::AuthDomain makeSOAAndNSNodes(DNSRecord& dr, T content)
   dr.d_place = DNSResourceRecord::ANSWER;
   dr.d_ttl = 86400;
   dr.d_type = QType::SOA;
-  dr.setContent(DNSRecordContent::mastermake(QType::SOA, 1, "localhost. root 1 604800 86400 2419200 604800"));
+  dr.setContent(DNSRecordContent::make(QType::SOA, 1, "localhost. root 1 604800 86400 2419200 604800"));
 
   SyncRes::AuthDomain ad;
   ad.d_rdForward = false;
@@ -229,7 +230,7 @@ static void makeNameToIPZone(SyncRes::domainmap_t& newMap,
   auto recType = address.isIPv6() ? QType::AAAA : QType::A;
   dr.d_type = recType;
   dr.d_ttl = 86400;
-  dr.setContent(DNSRecordContent::mastermake(recType, QClass::IN, address.toStringNoInterface()));
+  dr.setContent(DNSRecordContent::make(recType, QClass::IN, address.toStringNoInterface()));
   entry->second.d_records.insert(dr);
 }
 
@@ -247,7 +248,7 @@ static void makeIPToNamesZone(SyncRes::domainmap_t& newMap,
 
   // Add a PTR entry for the primary name for reverse lookups.
   dr.d_type = QType::PTR;
-  dr.setContent(DNSRecordContent::mastermake(QType::PTR, 1, DNSName(canonicalHostname).toString()));
+  dr.setContent(DNSRecordContent::make(QType::PTR, 1, DNSName(canonicalHostname).toString()));
   ad.d_records.insert(dr);
 
   addToDomainMap(newMap, std::move(ad), dr.d_name, log, false, true);
@@ -267,6 +268,17 @@ void makePartialIPZone(SyncRes::domainmap_t& newMap,
   SyncRes::AuthDomain ad = makeSOAAndNSNodes(dr, DNSName("localhost."));
 
   addToDomainMap(newMap, std::move(ad), dr.d_name, log, true, true);
+}
+
+void makePartialIP6Zone(SyncRes::domainmap_t& newMap,
+                        const std::string& name,
+                        Logr::log_t log)
+{
+  DNSRecord dnsRecord;
+  dnsRecord.d_name = DNSName(name);
+  SyncRes::AuthDomain authDomain = makeSOAAndNSNodes(dnsRecord, DNSName("localhost."));
+
+  addToDomainMap(newMap, std::move(authDomain), dnsRecord.d_name, log, true, true);
 }
 
 void addForwardAndReverseLookupEntries(SyncRes::domainmap_t& newMap,

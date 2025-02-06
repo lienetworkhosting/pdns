@@ -1,5 +1,9 @@
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_NO_MAIN
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -314,7 +318,7 @@ struct Fixture
     addSignerParams(DNSSECKeeper::ED25519, "ED25519", ed25519);
 #endif
 
-#if defined(HAVE_LIBDECAF) || defined(HAVE_LIBCRYPTO_ED448)
+#if defined(HAVE_LIBCRYPTO_ED448)
     addSignerParams(DNSSECKeeper::ED448, "ED448", ed448);
 #endif
   }
@@ -340,8 +344,6 @@ static void checkRR(const SignerParams& signer)
   /* values taken from rfc8080 for ed25519 and ed448, rfc5933 for gost */
   DNSName qname(dpk.getAlgorithm() == DNSSECKeeper::ECCGOST ? "www.example.net." : "example.com.");
 
-  reportBasicTypes();
-
   RRSIGRecordContent rrc;
   uint32_t expire = 1440021600;
   uint32_t inception = 1438207200;
@@ -350,11 +352,11 @@ static void checkRR(const SignerParams& signer)
     rrc.d_signer = DNSName("example.net.");
     inception = 946684800;
     expire = 1893456000;
-    rrs.insert(DNSRecordContent::mastermake(QType::A, QClass::IN, "192.0.2.1"));
+    rrs.insert(DNSRecordContent::make(QType::A, QClass::IN, "192.0.2.1"));
   }
   else {
     rrc.d_signer = qname;
-    rrs.insert(DNSRecordContent::mastermake(QType::MX, QClass::IN, "10 mail.example.com."));
+    rrs.insert(DNSRecordContent::make(QType::MX, QClass::IN, "10 mail.example.com."));
   }
 
   rrc.d_originalttl = 3600;

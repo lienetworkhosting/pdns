@@ -69,7 +69,7 @@ struct is_to_string_available<T, std::void_t<decltype(std::to_string(std::declva
 {
 };
 
-// Same mechanism for t.toLogString()
+// Same mechanism for t.toLogString() and t.toStructuredLogString()
 template <typename T, typename = void>
 struct is_toLogString_available : std::false_type
 {
@@ -77,6 +77,16 @@ struct is_toLogString_available : std::false_type
 
 template <typename T>
 struct is_toLogString_available<T, std::void_t<decltype(std::declval<T>().toLogString())>> : std::true_type
+{
+};
+
+template <typename T, typename = void>
+struct is_toStructuredLogString_available : std::false_type
+{
+};
+
+template <typename T>
+struct is_toStructuredLogString_available<T, std::void_t<decltype(std::declval<T>().toStructuredLogString())>> : std::true_type
 {
 };
 
@@ -90,6 +100,8 @@ struct is_toString_available<T, std::void_t<decltype(std::declval<T>().toString(
 {
 };
 
+const char* toTimestampStringMilli(const struct timeval& tval, std::array<char, 64>& buf, const std::string& format = "%s");
+
 template <typename T>
 struct Loggable : public Logr::Loggable
 {
@@ -102,6 +114,9 @@ struct Loggable : public Logr::Loggable
   {
     if constexpr (std::is_same_v<T, std::string>) {
       return _t;
+    }
+    else if constexpr (is_toStructuredLogString_available<T>::value) {
+      return _t.toStructuredLogString();
     }
     else if constexpr (is_toLogString_available<T>::value) {
       return _t.toLogString();
@@ -193,8 +208,10 @@ private:
 
 extern std::shared_ptr<Logging::Logger> g_slog;
 
-// Prefer structured logging?
-extern bool g_slogStructured;
+// Prefer structured logging? Since Recursor 5.1.0, we always do. We keep a const, to allow for
+// step-by-step removal of old style logging code (for recursor-only code). Note that code shared
+// with auth still uses old-style, so the SLOG calls should remain for shared code.
+constexpr bool g_slogStructured = true;
 
 // A helper macro to switch between old-style logging and new-style (structured logging)
 // A typical use:
@@ -202,19 +219,16 @@ extern bool g_slogStructured;
 // SLOG(g_log<<Logger::Warning<<"Unable to parse configuration file '"<<configname<<"'"<<endl,
 //      startupLog->error("No such file", "Unable to parse configuration file", "config_file", Logging::Loggable(configname));
 //
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define SLOG(oldStyle, slogCall) \
-  if (true) {                    \
-    if (g_slogStructured) {      \
-      slogCall;                  \
-    }                            \
-    else {                       \
-      oldStyle;                  \
-    }                            \
-  }
+  do {                           \
+    slogCall;                    \
+  } while (0)
 
 #else // No structured logging (e.g. auth)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define SLOG(oldStyle, slogCall) \
   do {                           \
     oldStyle;                    \
-  } while (0);
+  } while (0)
 #endif // RECURSOR

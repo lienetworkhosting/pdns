@@ -8,18 +8,18 @@ If the :ref:`setting-proxy-protocol-from` is also used, the substitution is done
 
 Depending on context, the incoming address can be
 
-The physical address ``P``
-  the physical address the query is received on.
+The interface address ``I``
+  the source network interface address of the client
 The source address ``S``
   the source address as specified in the Proxy protocol
 The mapped address ``M``
   the source address mapped by Table Based Proxy Mapping
 
-``S equals P`` if no Proxy Protocol is used.
+``S equals I`` if no Proxy Protocol is used.
 
 ``M equals S`` if no Table Based Proxy Mapping is used.
 
-``P`` determines if the Proxy Protocol is used (:ref:`setting-proxy-protocol-from`).
+``I`` determines if the Proxy Protocol is used (:ref:`setting-proxy-protocol-from`).
 
 ``S`` is passed to Lua functions and RPZ processing
 
@@ -43,11 +43,12 @@ See :func:`protobufServer` on how to tune the source address logged in ``Protobu
 .. function:: addProxyMapping(subnet, ip [, domains])
 
   .. versionadded:: 4.7.0
+  .. versionadded:: 5.1.0 Alternative equivalent YAML setting: :ref:`setting-yaml-incoming.proxymappings`.
 
   Specify a table based mapping for a subnet.
 
   :param string subnet: a subnet to match
-  :param string ip: the IP address or IPaddress port combination to match the subnet to.
+  :param string ip: the IP address or IP address + port combination to match the subnet to.
   :param array domains: An array of strings used to fill a :ref:`dns-suffix-match-group`.
 
 If the optional ``domains`` argument is given to this function, only queries for names matching the :ref:`dns-suffix-match-group` will use the value ``M`` to determine the outgoing ECS; other queries will use the value ``S``.

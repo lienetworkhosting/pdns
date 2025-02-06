@@ -23,6 +23,7 @@ on:
           debian-bookworm
           ubuntu-focal
           ubuntu-jammy
+          ubuntu-noble
       ref:
         description: git ref to checkout
         type: string
@@ -46,10 +47,12 @@ permissions: # least privileges, see https://docs.github.com/en/actions/using-wo
 
 jobs:
   prepare:
-    name: generate OS list
-    runs-on: ubuntu-20.04
+    name: generate OS runner and arch list
+    runs-on: ubuntu-22.04
     outputs:
       oslist: ${{ steps.get-oslist.outputs.oslist }}
+      runnerlist: ${{ steps.get-runnerlist.outputs.runnerlist }}
+      archlist: ${{ steps.get-archlist.outputs.archlist }}
     steps:
       # instead of jo, we could use jq here, which avoids running apt, and thus would be faster.
       # but, as this whole workflow needs at least 30 minutes to run, I prefer spending a few seconds here
@@ -57,28 +60,46 @@ jobs:
       - run: sudo apt-get update && sudo apt-get -y install jo
       - id: get-oslist
         run: echo "oslist=$(jo -a ${{ inputs.os }})" >> "$GITHUB_OUTPUT"
+      - id: get-runnerlist
+        run: echo "runnerlist=$(jo -a ubuntu-22.04 ${{ vars.ARM64_USE_UBICLOUD == '1' && 'ubicloud-standard-2-arm' || '' }})" >> "$GITHUB_OUTPUT"
+      - id: get-archlist
+        run: echo "archlist=$(jo -a  x86_64 ${{ vars.ARM64_USE_UBICLOUD == '1' && 'aarch64' || '' }})" >> "$GITHUB_OUTPUT"
+
   build:
     needs: prepare
-    name: build ${{ inputs.product }} (${{ inputs.ref }}) for ${{ matrix.os }}
-    # on a ubuntu-20.04 VM
-    runs-on: ubuntu-20.04
+    name: for ${{ matrix.os }} ${{ inputs.product }} (${{ inputs.ref }}) on ${{ matrix.runner-os }}
+    runs-on: ${{ matrix.runner-os }}
     strategy:
       matrix:
         os: ${{fromJson(needs.prepare.outputs.oslist)}}
+        runner-os: ${{ fromJson(needs.prepare.outputs.runnerlist )}}
+        exclude:
+          - os: el-7
+            runner-os: ubicloud-standard-2-arm
       fail-fast: false
     outputs:
+      product-name: ${{ steps.normalize-name.outputs.normalized-package-name }}
       version: ${{ steps.getversion.outputs.version }}
-      pkghashes-el-7: ${{ steps.pkghashes.outputs.pkghashes-el-7 }}
-      pkghashes-el-8: ${{ steps.pkghashes.outputs.pkghashes-el-8 }}
-      pkghashes-el-9: ${{ steps.pkghashes.outputs.pkghashes-el-9 }}
-      pkghashes-debian-buster: ${{ steps.pkghashes.outputs.pkghashes-debian-buster }}
-      pkghashes-debian-bullseye: ${{ steps.pkghashes.outputs.pkghashes-debian-bullseye }}
-      pkghashes-debian-bookworm: ${{ steps.pkghashes.outputs.pkghashes-debian-bookworm }}
-      pkghashes-ubuntu-focal: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-focal }}
-      pkghashes-ubuntu-jammy: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-jammy }}
+      pkghashes-el-7-x86_64: ${{ steps.pkghashes.outputs.pkghashes-el-7-x86_64 }}
+      pkghashes-el-8-x86_64: ${{ steps.pkghashes.outputs.pkghashes-el-8-x86_64 }}
+      pkghashes-el-8-aarch64: ${{ steps.pkghashes.outputs.pkghashes-el-8-aarch64 }}
+      pkghashes-el-9-x86_64: ${{ steps.pkghashes.outputs.pkghashes-el-9-x86_64 }}
+      pkghashes-el-9-aarch64: ${{ steps.pkghashes.outputs.pkghashes-el-9-aarch64 }}
+      pkghashes-debian-buster-x86_64: ${{ steps.pkghashes.outputs.pkghashes-debian-buster-x86_64 }}
+      pkghashes-debian-buster-aarch64: ${{ steps.pkghashes.outputs.pkghashes-debian-buster-aarch64 }}
+      pkghashes-debian-bullseye-x86_64: ${{ steps.pkghashes.outputs.pkghashes-debian-bullseye-x86_64 }}
+      pkghashes-debian-bullseye-aarch64: ${{ steps.pkghashes.outputs.pkghashes-debian-bullseye-aarch64 }}
+      pkghashes-debian-bookworm-x86_64: ${{ steps.pkghashes.outputs.pkghashes-debian-bookworm-x86_64 }}
+      pkghashes-debian-bookworm-aarch64: ${{ steps.pkghashes.outputs.pkghashes-debian-bookworm-aarch64 }}
+      pkghashes-ubuntu-focal-x86_64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-focal-x86_64 }}
+      pkghashes-ubuntu-focal-aarch64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-focal-aarch64 }}
+      pkghashes-ubuntu-jammy-x86_64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-jammy-x86_64 }}
+      pkghashes-ubuntu-jammy-aarch64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-jammy-aarch64 }}
+      pkghashes-ubuntu-noble-x86_64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-noble-x86_64 }}
+      pkghashes-ubuntu-noble-aarch64: ${{ steps.pkghashes.outputs.pkghashes-ubuntu-noble-aarch64 }}
       srchashes: ${{ steps.srchashes.outputs.srchashes }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # for correct version numbers
           submodules: recursive
@@ -89,12 +110,10 @@ jobs:
         run: |
           echo "version=$(readlink builder/tmp/latest)" >> $GITHUB_OUTPUT
         id: getversion
-      - name: Upload packages as GH artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ inputs.product }}-${{ matrix.os }}-${{ steps.getversion.outputs.version }}
-          path: built_pkgs/
-          retention-days: 7
+      - name: Get target architecture
+        run: |
+          echo "target-arch=$(uname -m)" >> $GITHUB_OUTPUT
+        id: getarch
       - name: Normalize package name
         id: normalize-name
         run: |
@@ -105,23 +124,30 @@ jobs:
           else
             echo "normalized-package-name=${{ inputs.product }}" >> $GITHUB_OUTPUT
           fi
-
+      - name: Include architecture in the packages compressed file name
+        run: for f in $(ls ./built_pkgs/*/*/*-${{ matrix.os }}.tar.bz2 | sed 's/\.tar.bz2$//'); do mv $f.tar.bz2 $f-${{ steps.getarch.outputs.target-arch }}.tar.bz2; done
+      - name: Upload packages as GH artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.product }}-${{ matrix.os }}-${{ steps.getversion.outputs.version }}-${{ steps.getarch.outputs.target-arch }}
+          path: built_pkgs/
+          retention-days: 7
       - name: Extract packages from the tarball
         # so we get provenance for individual packages (and the JSON package manifests from the builder)
         id: extract
         run: |
           mkdir -m 700 -p ./packages/
-          tar xvf ./built_pkgs/*/*/${{ steps.normalize-name.outputs.normalized-package-name }}-${{ steps.getversion.outputs.version }}-${{ matrix.os }}.tar.bz2 -C ./packages/ --transform='s/.*\///'
+          tar xvf ./built_pkgs/*/*/${{ steps.normalize-name.outputs.normalized-package-name }}-${{ steps.getversion.outputs.version }}-${{ matrix.os }}-${{ steps.getarch.outputs.target-arch }}.tar.bz2 -C ./packages/ --transform='s/.*\///'
       - name: Generate package hashes for provenance
         shell: bash
         id: pkghashes
         run: |
-          echo "pkghashes-${{ matrix.os }}=$(sha256sum ./packages/*.rpm ./packages/*.deb ./packages/*.json | base64 -w0)" >> $GITHUB_OUTPUT
+          echo "pkghashes-${{ matrix.os }}-${{ steps.getarch.outputs.target-arch }}=$(sha256sum ./packages/*.rpm ./packages/*.deb ./packages/*.json | base64 -w0)" >> $GITHUB_OUTPUT
       - name: Generate source hash for provenance
         shell: bash
         id: srchashes
         run: |
-          echo "srchashes=$(sha256sum ./built_pkgs/*/*/${{ steps.normalize-name.outputs.normalized-package-name }}-${{ steps.getversion.outputs.version }}.tar.bz2 ./packages/*.json | base64 -w0)" >> $GITHUB_OUTPUT
+          echo "srchashes=$(sha256sum ./built_pkgs/*/*/${{ steps.normalize-name.outputs.normalized-package-name }}-${{ steps.getversion.outputs.version }}.tar.bz2 | base64 -w0)" >> $GITHUB_OUTPUT
       - name: Upload packages to downloads.powerdns.com
         env:
           SSHKEY: ${{ secrets.DOWNLOADS_AUTOBUILT_SECRET }}
@@ -139,12 +165,19 @@ jobs:
   check-hashes:
     needs: build
     name: Check if hashes were created for all requested targets
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Get list of outputs from build jobs
-        run: echo '${{ toJSON(needs.build.outputs) }}' | jq 'keys[]' | grep -v version | tee /tmp/build-outputs.txt
+        run: echo '${{ toJSON(needs.build.outputs) }}' | jq 'keys[]' | grep -vE 'version|product-name' | tee /tmp/build-outputs.txt
       - name: Get list of OS inputs
-        run: for i in ${{ inputs.os }}; do echo "\"pkghashes-$i\""; done | sort | tee /tmp/os-inputs.txt; echo "\"srchashes\"" | tee -a /tmp/os-inputs.txt
+        run: |
+          for os in ${{ inputs.os }}; do
+            for architecture in x86_64 ${{ vars.ARM64_USE_UBICLOUD == '1' && 'aarch64' || '' }}; do
+              [[ "$os" != "el-7" || "$architecture" != "aarch64"  ]] && echo "\"pkghashes-$os-$architecture\"" | tee -a /tmp/os-inputs.txt
+            done
+          done
+          sort -o /tmp/os-inputs.txt /tmp/os-inputs.txt
+          echo "\"srchashes\"" | tee -a /tmp/os-inputs.txt
       - name: Fail if there is a hash missing
         run: if ! diff -q /tmp/build-outputs.txt /tmp/os-inputs.txt; then exit 1; fi
 
@@ -154,15 +187,20 @@ jobs:
     strategy:
       matrix:
         os: ${{fromJson(needs.prepare.outputs.oslist)}}
+        architecture: ${{ fromJson(needs.prepare.outputs.archlist )}}
+        exclude:
+          - os: el-7
+            architecture: aarch64
     permissions:
       actions: read   # To read the workflow path.
       id-token: write # To sign the provenance.
       contents: write # To be able to upload assets as release artifacts
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v1.4.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
     with:
-      base64-subjects: "${{ needs.build.outputs[format('pkghashes-{0}', matrix.os)] }}"
+      base64-subjects: "${{ needs.build.outputs[format('pkghashes-{0}-{1}', matrix.os, matrix.architecture)] }}"
       upload-assets: false
-      provenance-name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-${{ matrix.os}}.intoto.jsonl"
+      provenance-name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-${{ matrix.os }}-${{ matrix.architecture }}.intoto.jsonl"
+      private-repository: true
 
   provenance-src:
     needs: build
@@ -171,37 +209,42 @@ jobs:
       actions: read   # To read the workflow path.
       id-token: write # To sign the provenance.
       contents: write # To be able to upload assets as release artifacts
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v1.4.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
     with:
       base64-subjects: "${{ needs.build.outputs.srchashes }}"
       upload-assets: false
       provenance-name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-src.intoto.jsonl"
+      private-repository: true
 
   upload-provenance:
     needs: [prepare, build, provenance-src, provenance-pkgs]
     name: Upload the provenance artifacts to downloads.powerdns.com
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         os: ${{fromJson(needs.prepare.outputs.oslist)}}
+        architecture: ${{ fromJson(needs.prepare.outputs.archlist )}}
+        exclude:
+          - os: el-7
+            architecture: aarch64
     steps:
       - name: Download source tarball provenance for ${{ inputs.product }} (${{ inputs.ref }})
         id: download-src-provenance
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4 # be careful, this needs to match what https://github.com/slsa-framework/slsa-github-generator is using
         with:
           name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-src.intoto.jsonl"
       - name: Download provenance for ${{ inputs.product }} (${{ inputs.ref }}) for ${{ matrix.os }}
         id: download-provenance
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4 # be careful, this needs to match what https://github.com/slsa-framework/slsa-github-generator is using
         with:
-          name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-${{ matrix.os}}.intoto.jsonl"
+          name: "${{ inputs.product }}-${{ needs.build.outputs.version }}-${{ matrix.os }}-${{ matrix.architecture }}.intoto.jsonl"
       - name: Upload provenance artifacts to downloads.powerdns.com
         id: upload-provenance
         env:
           SSHKEY: ${{ secrets.DOWNLOADS_AUTOBUILT_SECRET }}
           RSYNCTARGET: ${{ secrets.DOWNLOADS_AUTOBUILT_RSYNCTARGET }}
           HOSTKEY: ${{ secrets.DOWNLOADS_AUTOBUILT_HOSTKEY }}
-          PRODUCT: ${{ inputs.product }}
+          PRODUCT: ${{ needs.build.outputs.product-name }}
           VERSION: ${{ needs.build.outputs.version }}
         if:
           "${{ env.SSHKEY != '' }}"
@@ -211,4 +254,6 @@ jobs:
           echo "$SSHKEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           echo "$HOSTKEY" > ~/.ssh/known_hosts
-          rsync -4rlptD ${{steps.download-src-provenance.outputs.download-path}}/*.jsonl ${{steps.download-provenance.outputs.download-path}}/*.jsonl "${RSYNCTARGET}/${PRODUCT}/${VERSION}/"
+          mkdir -m 755 -p "slsa/${PRODUCT}/${VERSION}/"
+          mv ${{steps.download-provenance.outputs.download-path}}/*.jsonl "slsa/${PRODUCT}/${VERSION}"
+          rsync -4rlptD slsa/* "$RSYNCTARGET"

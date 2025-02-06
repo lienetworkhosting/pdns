@@ -24,7 +24,11 @@
 #include <string>
 #include <list>
 #include <boost/utility.hpp>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#include <utility>
 #include <yahttp/yahttp.hpp>
+#pragma GCC diagnostic pop
 
 #include "json11.hpp"
 
@@ -35,7 +39,8 @@
 
 class HttpRequest : public YaHTTP::Request {
 public:
-  HttpRequest(const string& logprefix_="") : YaHTTP::Request(), logprefix(logprefix_) { };
+  HttpRequest(string logprefix_ = "") :
+    YaHTTP::Request(), logprefix(std::move(logprefix_)) {};
 
   string logprefix;
   bool accept_yaml{false};
@@ -162,7 +167,7 @@ public:
     d_server_socket.bind(d_local);
     d_server_socket.listen();
   }
-  virtual ~Server() { };
+  virtual ~Server() = default;
 
   ComboAddress d_local;
 
@@ -178,7 +183,7 @@ class WebServer : public boost::noncopyable
 {
 public:
   WebServer(string listenaddress, int port);
-  virtual ~WebServer() { };
+  virtual ~WebServer() = default;
 
 #ifdef RECURSOR
   void setSLog(Logr::log_t log)
@@ -209,6 +214,10 @@ public:
     d_maxbodysize = s * 1024 * 1024;
   }
 
+  void setConnectionTimeout(int t) { // in seconds
+    d_connectiontimeout = t;
+  }
+
   void setACL(const NetmaskGroup &nmg) {
     d_acl = nmg;
   }
@@ -222,8 +231,8 @@ public:
   void handleRequest(HttpRequest& request, HttpResponse& resp) const;
 
   typedef std::function<void(HttpRequest* req, HttpResponse* resp)> HandlerFunction;
-  void registerApiHandler(const string& url, const HandlerFunction& handler, bool allowPassword=false);
-  void registerWebHandler(const string& url, const HandlerFunction& handler);
+  void registerApiHandler(const string& url, const HandlerFunction& handler, const std::string& method = "", bool allowPassword=false);
+  void registerWebHandler(const string& url, const HandlerFunction& handler, const std::string& method = "");
 
   enum class LogLevel : uint8_t {
     None = 0,                // No logs from requests at all
@@ -263,7 +272,7 @@ public:
 #endif
 
 protected:
-  void registerBareHandler(const string& url, const HandlerFunction& handler);
+  static void registerBareHandler(const string& url, const HandlerFunction& handler, const std::string& method);
   void logRequest(const HttpRequest& req, const ComboAddress& remote) const;
   void logResponse(const HttpResponse& resp, const ComboAddress& remote, const string& logprefix) const;
 
@@ -282,6 +291,7 @@ protected:
   std::unique_ptr<CredentialsHolder> d_webserverPassword{nullptr};
 
   ssize_t d_maxbodysize; // in bytes
+  int d_connectiontimeout{5}; // in seconds
 
   NetmaskGroup d_acl;
 

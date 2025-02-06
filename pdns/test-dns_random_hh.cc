@@ -1,4 +1,7 @@
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_NO_MAIN
 
 #ifdef HAVE_CONFIG_H
@@ -7,10 +10,13 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/assign/std/map.hpp>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wextra"
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics.hpp>
+#pragma GCC diagnostic pop
 
 #include "arguments.hh"
 #include "dns_random.hh"

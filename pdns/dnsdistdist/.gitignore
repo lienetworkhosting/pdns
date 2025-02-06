@@ -34,6 +34,8 @@
 /missing
 /testrunner
 /dnsdist
+/fuzz_target_dnsdistcache
+/fuzz_target_xsk
 /*.pb.cc
 /*.pb.h
 /dnsdist.service

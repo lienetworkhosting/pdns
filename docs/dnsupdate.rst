@@ -4,7 +4,7 @@ Dynamic DNS Update (RFC 2136)
 Starting with the PowerDNS Authoritative Server 3.4.0, DNS update
 support is available. There are a number of items NOT supported:
 
--  There is no support for GSS\*TSIG and SIG (TSIG is supported);
+-  There is no support for SIG (TSIG and GSS\*TSIG are supported);
 -  WKS records are specifically mentioned in the RFC, we don't
    specifically care about WKS records;
 -  Anything we forgot....
@@ -45,6 +45,15 @@ be left empty to disallow everything, this then should be used in
 combination with the ``ALLOW-DNSUPDATE-FROM`` :doc:`domain metadata <domainmetadata>` setting per
 zone. Setting a range here and in ``ALLOW-DNSUPDATE-FROM`` enables updates
 from either address range.
+
+``dnsupdate-require-tsig``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 5.0.0
+
+A setting to require DNS updates to be signed by a valid TSIG signature.
+The default is no, which means zones without TSIG keys can be updated by
+unauthenticated agents operating from an allowed address range.
 
 ``forward-dnsupdate``
 ~~~~~~~~~~~~~~~~~~~~~
@@ -152,6 +161,7 @@ both requirements need to be satisfied before an update will be accepted.
 By default, an update can add, update or delete any resource records in
 the zone.  See :ref:`dnsupdate-update-policy` for finer-grained
 control of what an update is allowed to do.
+Use :ref:`setting-dnsupdate-require-tsig` to disallow unsigned updates.
 
 .. _metadata-forward-dnsupdate:
 
@@ -265,9 +275,9 @@ Kdhcpdupdate.*.private). You're interested in the .key file:
     dhcpdupdate. IN KEY 0 3 157 FYhvwsW1ZtFZqWzsMpqhbg==
 
 The important bits are the name of the key (**dhcpdupdate**) and the
-hash of the key (**FYhvwsW1ZtFZqWzsMpqhbg==**
+hash of the key (**FYhvwsW1ZtFZqWzsMpqhbg==**)
 
-Using the details from the key you've just generated. Add the following
+Using the details from the freshly generated key, add the following
 to your dhcpd.conf:
 
 ::
@@ -328,10 +338,10 @@ configuration file.
 Setting up PowerDNS
 ~~~~~~~~~~~~~~~~~~~
 
-A number of small changes are needed to powerdns to make it accept
+A number of small changes are needed to PowerDNS to make it accept
 dynamic updates from **dhcpd**.
 
-Enabled DNS update (:rfc:`2136`) support functionality in PowerDNS by adding
+Enable DNS update (:rfc:`2136`) support functionality in PowerDNS by adding
 the following to the PowerDNS configuration file (pdns.conf).
 
 .. code-block:: ini
@@ -341,10 +351,10 @@ the following to the PowerDNS configuration file (pdns.conf).
 
 This tells PowerDNS to:
 
-1. Enable DNS update support(:ref:`setting-dnsupdate`)
+1. Enable DNS update support (:ref:`setting-dnsupdate`)
 2. Allow updates from NO ip-address (":ref:`setting-allow-dnsupdate-from`\ =")
 
-We just told powerdns (via the configuration file) that we accept
+We just told PowerDNS (via the configuration file) that we accept
 updates from nobody via the :ref:`setting-allow-dnsupdate-from`
 parameter. That's not very useful, so we're going to give permissions
 per zone (including the appropriate reverse zone), via the
@@ -411,7 +421,7 @@ PowerDNS.
 11. The prerequisite checks are performed (section 3.2 of :rfc:`2136 <2136#section-3.2>`). If a
     check fails, the corresponding RCode is returned. No further
     processing will happen.
-12. Per record in the update message, a the prescan checks are
+12. Per record in the update message, the prescan checks are
     performed. If the prescan fails, the corresponding RCode is
     returned. If the prescan for the record is correct, the actual
     update/delete/modify of the record is performed. If the update fails

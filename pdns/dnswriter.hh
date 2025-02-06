@@ -138,6 +138,7 @@ public:
 
   dnsheader* getHeader();
   void getRecordPayload(string& records); // call __before commit__
+  void getWireFormatContent(string& record); // call __before commit__
 
   void setCanonic(bool val)
   {
@@ -171,8 +172,8 @@ private:
   DNSName d_qname;
 
   uint16_t d_truncatemarker; // end of header, for truncate
-  DNSResourceRecord::Place d_recordplace;
-  bool d_canonic, d_lowerCase, d_compress{false};
+  DNSResourceRecord::Place d_recordplace{DNSResourceRecord::QUESTION};
+  bool d_canonic{false}, d_lowerCase{false}, d_compress{false};
 };
 
 using DNSPacketWriter = GenericDNSPacketWriter<std::vector<uint8_t>>;

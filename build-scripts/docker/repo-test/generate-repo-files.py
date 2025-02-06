@@ -8,7 +8,7 @@
 # - `source venv/bin/activate`
 # - `pip install --upgrade pip`
 # - `pip install -r requirements.txt`
-# - `./generate-repo-files.py auth-41`
+# - `./generate-repo-files.py --test rec-51`
 
 # Modules
 
@@ -25,7 +25,7 @@ from jinja2 import Environment, FileSystemLoader
 
 # Globals
 
-g_version = '1.0.3'
+g_version = '1.0.4'
 
 g_verbose = False
 
@@ -44,21 +44,22 @@ def init_argparser():
                                                  'test PowerDNS repositories.')
     parser.add_argument('release', metavar='RELEASE',
                         choices=[# Authoritative Server
-                                 'auth-44', 'auth-45', 'auth-46', 'auth-47',
-                                 'auth-48', 'auth-master',
+                                 'auth-47', 'auth-48', 'auth-49',
+                                 'auth-master',
                                  # Recursor
-                                 'rec-46', 'rec-47', 'rec-48', 'rec-49',
+                                 'rec-48', 'rec-49', 'rec-50', 'rec-51',
                                  'rec-master',
                                  # DNSDist
-                                 'dnsdist-15', 'dnsdist-16', 'dnsdist-17',
-                                 'dnsdist-18', 'dnsdist-master'
-                                 ],
+                                 'dnsdist-17', 'dnsdist-18', 'dnsdist-19',
+                                 'dnsdist-master'],
                         help='the release to generate Docker files for: ' +
                              '%(choices)s')
     parser.add_argument('--run-output', action='store_true',
                         help='always show output from running a container')
     parser.add_argument('--test', action='store_true',
                         help='test the release')
+    parser.add_argument('--test-aarch64', action='store_true',
+                        help='test the release for ARM64')
     parser.add_argument('--verbose', action='store_true',
                         help='verbose output')
     parser.add_argument('--version', action='store_true',
@@ -79,7 +80,7 @@ def write_dockerfile (os, os_version, release):
         os_image = os
 
     if release.startswith('auth-'):
-        if os in ('centos', 'el'):
+        if os in ('el'):
             pkg = 'pdns'
         else:
             pkg = 'pdns-server'
@@ -111,16 +112,10 @@ def write_dockerfile (os, os_version, release):
 def write_list_file (os, os_version, release):
     tpl = g_env.get_template('pdns-list.jinja2')
 
-    if os in ['debian', 'ubuntu']:
-        arch = ' [arch=amd64] '
-    else:
-        arch = ' '
-
     f = open('pdns.list.{}.{}-{}'.format(release, os, os_version), 'w')
     f.write(tpl.render({ "os": os,
                          "os_version": os_version,
-                         "release": release,
-                         "arch": arch }))
+                         "release": release }))
     f.close()
 
 
@@ -141,54 +136,37 @@ def write_release_files (release):
     if g_verbose:
         print("Writing release files...")
 
-    if release in ['auth-44', 'auth-45', 'auth-46', 'auth-47', 'auth-48',
-                   'auth-master',
-                   'rec-46', 'rec-47', 'rec-48', 'rec-49',
-                   'rec-master',
-                   'dnsdist-15', 'dnsdist-16', 'dnsdist-17', 'dnsdist-18',
-                   'dnsdist-master']:
+    if release in ['auth-47', 'auth-48', 'auth-49', 'auth-master',
+                   'rec-48', 'rec-49', 'rec-50', 'rec-51', 'rec-master',
+                   'dnsdist-17', 'dnsdist-18', 'dnsdist-19', 'dnsdist-master']:
         write_pkg_pin_file(release)
-        write_dockerfile('centos', '7', release)
+        write_dockerfile('el', '7', release)
         write_dockerfile('el', '8', release)
+        write_dockerfile('el', '9', release)
         write_dockerfile('debian', 'buster', release)
         write_list_file('debian', 'buster', release)
-        write_dockerfile('ubuntu', 'focal', release)
-        write_list_file('ubuntu', 'focal', release)
-
-    if release in ['dnsdist-15']:
-        write_dockerfile('raspbian', 'buster', release)
-        write_list_file('raspbian', 'buster', release)
-
-    if release in ['auth-46', 'auth-47', 'auth-48', 'auth-master',
-                   'rec-46', 'rec-47', 'rec-48', 'rec-49', 'rec-master',
-                   'dnsdist-16', 'dnsdist-17', 'dnsdist-18', 'dnsdist-master']:
         write_dockerfile('debian', 'bullseye', release)
         write_list_file('debian', 'bullseye', release)
-
-    if release in ['auth-46', 'auth-47', 'auth-master',
-                   'rec-46', 'rec-47', 'rec-48', 'rec-49', 'rec-master',
-                   'dnsdist-15', 'dnsdist-16', 'dnsdist-17', 'dnsdist-master']:
-        write_dockerfile('ubuntu', 'bionic', release)
-        write_list_file('ubuntu', 'bionic', release)
-
-    if release in ['auth-46', 'auth-47', 'auth-48', 'auth-master',
-                   'rec-46', 'rec-47', 'rec-48', 'rec-49', 'rec-master',
-                   'dnsdist-17', 'dnsdist-18', 'dnsdist-master']:
+        write_dockerfile('ubuntu', 'focal', release)
+        write_list_file('ubuntu', 'focal', release)
         write_dockerfile('ubuntu', 'jammy', release)
         write_list_file('ubuntu', 'jammy', release)
 
-    if release in ['auth-47', 'auth-48', 'auth-master',
-                   'rec-47', 'rec-48', 'rec-49', 'rec-master',
-                   'dnsdist-17', 'dnsdist-18', 'dnsdist-master']:
-        write_dockerfile('el', '9', release)
-
-    if release in ['auth-48', 'auth-master']:
+    if release in ['auth-48', 'auth-49', 'auth-master',
+                   'rec-48', 'rec-49', 'rec-50', 'rec-51', 'rec-master',
+                   'dnsdist-19', 'dnsdist-master']:
         write_dockerfile('debian', 'bookworm', release)
         write_list_file('debian', 'bookworm', release)
 
+    if release in ['auth-49', 'auth-master',
+                   'rec-50', 'rec-51', 'rec-master',
+                   'dnsdist-19', 'dnsdist-master']:
+        write_dockerfile('ubuntu', 'noble', release)
+        write_list_file('ubuntu', 'noble', release)
+
 # Test Release Functions
 
-def build (dockerfile):
+def build (dockerfile, arch='x86_64'):
     # Maybe create `determine_tag` function.
     if len(str(dockerfile)) <= len(g_dockerfile):
         print('Unable to determine tag for {}'.format(dockerfile))
@@ -197,9 +175,16 @@ def build (dockerfile):
     print('Building Docker image using {}...'.format(dockerfile))
     if g_verbose:
         print('  - tag = {}'.format(tag))
-    cp = subprocess.run(['docker', 'build', '--no-cache', '--pull', '--file',
-                         dockerfile, '--tag', tag, '.'],
-                        capture_output=not(g_verbose))
+    if arch == 'x86_64':
+        cp = subprocess.run(['docker', 'build', '--no-cache', '--pull',
+                             '--file', dockerfile, '--tag', tag, '.'],
+                            capture_output=not(g_verbose))
+    # not very subtle
+    elif arch == 'aarch64':
+        cp = subprocess.run(['docker', 'build', '--platform', 'linux/arm64/v8',
+                             '--no-cache', '--pull', '--file', dockerfile,
+                             '--tag', tag, '.'],
+                            capture_output=not(g_verbose))
     # FIXME write failed output to log
     if cp.returncode != 0:
         print('Error building {}: {}'.format(tag, repr(cp.returncode)))
@@ -207,16 +192,22 @@ def build (dockerfile):
     return ( tag, cp.returncode )
 
 
-def run (tag):
+def run (tag, arch='x86_64'):
     if g_run_output:
         capture_run_output = False
     else:
         capture_run_output = not(g_verbose)
     print('Running Docker container tagged {}...'.format(tag))
-    cp = subprocess.run(['docker', 'run', tag],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    version = re.search('(PowerDNS Authoritative Server|PowerDNS Recursor|' +
-                         'dnsdist) (\d+\.\d+\.\d+(-\w+)?)',
+    if arch == 'x86_64':
+        cp = subprocess.run(['docker', 'run', tag],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # not very subtle
+    elif arch == 'aarch64':
+        cp = subprocess.run(['docker', 'run', '--platform', 'linux/arm64/v8',
+                             tag],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    version = re.search(r'(PowerDNS Authoritative Server|PowerDNS Recursor|' +
+                        r'dnsdist) (\d+\.\d+\.\d+(-\w+)?[^ ]*)',
                         cp.stdout.decode())
     if g_verbose:
         print(cp.stdout.decode())
@@ -242,17 +233,22 @@ def collect_dockerfiles (release):
     return files
 
 
-def test_release (release):
+def test_release (release, arch='x86_64'):
     # sorted because we want determinism
     dockerfiles = sorted(collect_dockerfiles(release))
     failed_builds = []
     failed_runs = []
     returned_versions = []
-    print('=== testing {} ==='.format(release))
+    print('=== testing {} ({}) ==='.format(release, arch))
     for df in dockerfiles:
+        if arch == 'aarch64' and str(df).endswith('el-7'):
+            continue
+        if arch == 'aarch64' and not release in ['rec-49', 'rec-50', 'rec-51', 'rec-master',
+                                                 'dnsdist-19', 'dnsdist-master']:
+            continue
         if g_verbose:
             print('--- {} ---'.format(df))
-        (tag, returncode) = build(df)
+        (tag, returncode) = build(df, arch)
         if returncode != 0:
             print('Skipping running {} due to build error: {}'
                   .format(df, returncode))
@@ -261,7 +257,7 @@ def test_release (release):
             print('Skipping running {} due to undetermined tag.'.format(df))
             failed_builds.append((str(df), returncode))
         else:
-            (returncode, return_version) = run(tag)
+            (returncode, return_version) = run(tag, arch)
             # for some reason 99 is returned on `cmd --version` :shrug:
             # (not sure if this is true since using `stdout=PIPE...`)
             if returncode != 0 and returncode != 99:
@@ -304,3 +300,6 @@ write_release_files(args.release)
 
 if args.test:
     test_release(args.release)
+
+if args.test_aarch64:
+    test_release(args.release, 'aarch64')

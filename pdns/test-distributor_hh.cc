@@ -1,9 +1,12 @@
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_NO_MAIN
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-#include <stdlib.h>
+#include <cstdlib>
 #include <unistd.h>
 #include <boost/test/unit_test.hpp>
 #include "distributor.hh"
@@ -62,17 +65,25 @@ BOOST_AUTO_TEST_CASE(test_distributor_basic) {
 
 struct BackendSlow
 {
-  std::unique_ptr<DNSPacket> question(Question&)
+  std::unique_ptr<DNSPacket> question([[maybe_unused]] Question& query)
   {
-    sleep(1);
+    if (d_shouldSleep) {
+      /* only sleep once per distributor thread, otherwise
+         we are sometimes destroyed before picking up the queued
+         queries, triggering a memory leak reported by Leak Sanitizer */
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      d_shouldSleep = false;
+    }
     return make_unique<DNSPacket>(true);
   }
+private:
+  bool d_shouldSleep{true};
 };
 
-static std::atomic<int> g_receivedAnswers1;
+static std::atomic<size_t> s_receivedAnswers;
 static void report1(std::unique_ptr<DNSPacket>& /* A */, int /* B */)
 {
-  g_receivedAnswers1++;
+  s_receivedAnswers++;
 }
 
 BOOST_AUTO_TEST_CASE(test_distributor_queue) {
@@ -82,17 +93,31 @@ BOOST_AUTO_TEST_CASE(test_distributor_queue) {
   S.declare("servfail-packets","Number of times a server-failed packet was sent out");
   S.declare("timedout-packets", "timedout-packets");
 
-  auto d=Distributor<DNSPacket, Question, BackendSlow>::Create(2);
+  s_receivedAnswers.store(0);
+  auto* distributor = Distributor<DNSPacket, Question, BackendSlow>::Create(2);
 
+  size_t queued = 0;
   BOOST_CHECK_EXCEPTION( {
-    int n;
     // bound should be higher than max-queue-length
-    for(n=0; n < 2000; ++n)  {
-      Question q;
-      q.d_dt.set();
-      d->question(q, report1);
+    const size_t bound = 2000;
+    for (size_t idx = 0; idx < bound; ++idx)  {
+      Question query;
+      query.d_dt.set();
+      ++queued;
+      distributor->question(query, report1);
     }
     }, DistributorFatal, [](DistributorFatal) { return true; });
+
+  BOOST_CHECK_GT(queued, 1000U);
+
+  // now we want to make sure that all queued queries have been processed
+  // otherwise LeakSanitizer will report a leak, but we are only willing to
+  // wait up to 3 seconds (3000 milliseconds)
+  size_t remainingMs = 3000;
+  while (s_receivedAnswers.load() < queued && remainingMs > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    remainingMs -= 10;
+  }
 };
 
 struct BackendDies

@@ -35,6 +35,7 @@ AC_DEFINE([RECURSOR], [1],
 m4_pattern_forbid([^_?PKG_[A-Z_]+$], [*** pkg.m4 missing, please install pkg-config])
 
 AX_CXX_COMPILE_STDCXX_17([noext], [mandatory])
+PDNS_CHECK_CARGO([1.64])
 
 # Rust runtime used dlopen from its static lib
 LT_INIT([dlopen])
@@ -42,27 +43,16 @@ AC_SUBST([LIBDL], [$lt_cv_dlopen_libs])
 
 PDNS_CHECK_OS
 PDNS_CHECK_NETWORK_LIBS
+AC_SEARCH_LIBS([res_query], [resolv], [], [AC_SEARCH_LIBS([__res_query], [resolv])])
+# macOS uses an alternative name internally
+AC_SEARCH_LIBS([res_9_query], [resolv])
 PTHREAD_SET_NAME
 AC_FUNC_STRERROR_R
 
 PDNS_CHECK_CLOCK_GETTIME
 
-BOOST_REQUIRE([1.42])
-
-# Check against flat_set header that requires boost >= 1.48
-BOOST_FIND_HEADER([boost/container/flat_set.hpp], [AC_MSG_NOTICE([boost::container::flat_set not available, will fallback to std::set])])
-
-# Boost Context was introduced in 1.51 (Aug 2012), but there was an immediate
-# API break in 1.52 (Nov 2012), so we only support that, and later.
-pdns_context_library=""
-AS_IF([test $boost_major_version -ge 152], [BOOST_CONTEXT([], [no])])
-AS_IF([test x"$boost_cv_lib_context" = "xyes"], [
-  pdns_context_library="Boost Context"
-], [
-  AC_CHECK_FUNCS([getcontext makecontext swapcontext], [pdns_context_library="System V ucontexts"])
-])
-AC_MSG_CHECKING([what context library to use for MTasker])
-AS_IF([test -n "$pdns_context_library"], [AC_MSG_RESULT([$pdns_context_library])], [AC_MSG_ERROR([neither boost::context nor System V ucontexts available])])
+BOOST_REQUIRE([1.54])
+BOOST_CONTEXT([], [yes])
 
 PDNS_ENABLE_UNIT_TESTS
 PDNS_ENABLE_REPRODUCIBLE
@@ -88,7 +78,6 @@ PDNS_CHECK_LIBCRYPTO([
 PDNS_CHECK_LIBCRYPTO_ECDSA
 PDNS_CHECK_LIBCRYPTO_EDDSA
 PDNS_WITH_LIBSODIUM
-PDNS_WITH_LIBDECAF
 PDNS_WITH_LIBCAP
 PDNS_CHECK_LIBCURL
 
@@ -232,11 +221,11 @@ AC_MSG_NOTICE([Features enabled])
 AC_MSG_NOTICE([----------------])
 AC_MSG_NOTICE([Lua: $LUAPC])
 AC_MSG_NOTICE([OpenSSL ECDSA: $libcrypto_ecdsa])
-AS_IF([test "x$LIBSODIUM_LIBS" != "x" || test "x$LIBDECAF_LIBS" != "x" || test "x$libcrypto_ed25519" = "xyes"],
+AS_IF([test "x$LIBSODIUM_LIBS" != "x" || test "x$libcrypto_ed25519" = "xyes"],
   [AC_MSG_NOTICE([ed25519: yes])],
   [AC_MSG_NOTICE([ed25519: no])]
 )
-AS_IF([test "x$LIBDECAF_LIBS" != "x" || test "x$libcrypto_ed448" = "xyes"],
+AS_IF([test "x$libcrypto_ed448" = "xyes"],
   [AC_MSG_NOTICE([ed448: yes])],
   [AC_MSG_NOTICE([ed448: no])]
 )
@@ -279,5 +268,4 @@ AS_IF([test "x$HAVE_LIBCURL" != "xn"],
   [AC_MSG_NOTICE([libcurl: yes])],
   [AC_MSG_NOTICE([libcurl: no])]
 )
-AC_MSG_NOTICE([Context library: $pdns_context_library])
 AC_MSG_NOTICE([])

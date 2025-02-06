@@ -15,15 +15,13 @@ enum class IOState : uint8_t { Done, NeedRead, NeedWrite, Async };
 class TLSSession
 {
 public:
-  virtual ~TLSSession()
-  {
-  }
+  virtual ~TLSSession() = default;
 };
 
 class TLSConnection
 {
 public:
-  virtual ~TLSConnection() { }
+  virtual ~TLSConnection() = default;
   virtual void doHandshake() = 0;
   virtual IOState tryConnect(bool fastOpen, const ComboAddress& remote) = 0;
   virtual void connect(bool fastOpen, const ComboAddress& remote, const struct timeval& timeout) = 0;
@@ -75,7 +73,7 @@ public:
   {
     d_rotatingTicketsKey.clear();
   }
-  virtual ~TLSCtx() {}
+  virtual ~TLSCtx() = default;
   virtual std::unique_ptr<TLSConnection> getConnection(int socket, const struct timeval& timeout, time_t now) = 0;
   virtual std::unique_ptr<TLSConnection> getClientConnection(const std::string& host, bool hostIsAddr, int socket, const struct timeval& timeout) = 0;
   virtual void rotateTicketsKey(time_t now) = 0;
@@ -83,7 +81,10 @@ public:
   {
     throw std::runtime_error("This TLS backend does not have the capability to load a tickets key from a file");
   }
-
+  virtual void loadTicketsKey(const std::string& /* key */)
+  {
+    throw std::runtime_error("This TLS backend does not have the capability to load a ticket key");
+  }
   void handleTicketsKeyRotation(time_t now)
   {
     if (d_ticketsKeyRotationDelay != 0 && now > d_ticketsKeyNextRotation) {
@@ -114,22 +115,27 @@ public:
   virtual size_t getTicketsKeysCount() = 0;
   virtual std::string getName() const = 0;
 
-  /* set the advertised ALPN protocols, in client or server context */
-  virtual bool setALPNProtos(const std::vector<std::vector<uint8_t>>& /* protos */)
-  {
-    return false;
-  }
+  using tickets_key_added_hook = std::function<void(const std::string& key)>;
 
-  /* called in a client context, if the client advertised more than one ALPN values and the server returned more than one as well, to select the one to use. */
-  virtual bool setNextProtocolSelectCallback(bool(*)(unsigned char** out, unsigned char* outlen, const unsigned char* in, unsigned int inlen))
+  static void setTicketsKeyAddedHook(const tickets_key_added_hook& hook)
   {
-    return false;
+    TLSCtx::s_ticketsKeyAddedHook = hook;
   }
-
+  static const tickets_key_added_hook& getTicketsKeyAddedHook()
+  {
+    return TLSCtx::s_ticketsKeyAddedHook;
+  }
+  static bool hasTicketsKeyAddedHook()
+  {
+    return TLSCtx::s_ticketsKeyAddedHook != nullptr;
+  }
 protected:
   std::atomic_flag d_rotatingTicketsKey;
   std::atomic<time_t> d_ticketsKeyNextRotation{0};
   time_t d_ticketsKeyRotationDelay{0};
+
+private:
+  static tickets_key_added_hook s_ticketsKeyAddedHook;
 };
 
 class TLSFrontend
@@ -158,6 +164,13 @@ public:
   {
     if (d_ctx != nullptr) {
       d_ctx->loadTicketsKeys(file);
+    }
+  }
+
+  void loadTicketsKey(const std::string& key)
+  {
+    if (d_ctx != nullptr) {
+      d_ctx->loadTicketsKey(key);
     }
   }
 
@@ -234,15 +247,16 @@ protected:
 class TCPIOHandler
 {
 public:
-
-  TCPIOHandler(const std::string& host, bool hostIsAddr, int socket, const struct timeval& timeout, std::shared_ptr<TLSCtx> ctx): d_socket(socket)
+  TCPIOHandler(const std::string& host, bool hostIsAddr, int socket, const struct timeval& timeout, const std::shared_ptr<TLSCtx>& ctx) :
+    d_socket(socket)
   {
     if (ctx) {
       d_conn = ctx->getClientConnection(host, hostIsAddr, d_socket, timeout);
     }
   }
 
-  TCPIOHandler(int socket, const struct timeval& timeout, std::shared_ptr<TLSCtx> ctx, time_t now): d_socket(socket)
+  TCPIOHandler(int socket, const struct timeval& timeout, const std::shared_ptr<TLSCtx>& ctx, time_t now) :
+    d_socket(socket)
   {
     if (ctx) {
       d_conn = ctx->getConnection(d_socket, timeout, now);
@@ -551,7 +565,7 @@ public:
     return d_conn->getAsyncFDs();
   }
 
-  const static bool s_disableConnectForUnitTests;
+  static const bool s_disableConnectForUnitTests;
 
 private:
   std::unique_ptr<TLSConnection> d_conn{nullptr};
@@ -568,6 +582,8 @@ struct TLSContextParameters
   std::string d_ciphers;
   std::string d_ciphers13;
   std::string d_caStore;
+  std::string d_keyLogFile;
+  TLSFrontend::ALPN d_alpn{TLSFrontend::ALPN::Unset};
   bool d_validateCertificates{true};
   bool d_releaseBuffers{true};
   bool d_enableRenegotiation{false};

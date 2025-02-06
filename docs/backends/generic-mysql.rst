@@ -1,5 +1,5 @@
-Generic MySQL backend
-=====================
+Generic MySQL/MariaDB  backend
+==============================
 
 * Native: Yes
 * Master: Yes
@@ -22,7 +22,7 @@ Generic MySQL backend
   zone transfer fails.
 
 .. warning::
-  While it is possible to run the Generic MySQL backend on top of MySQL
+  While it is possible to run the Generic MySQL/MariaDB backend on top of MySQL/MariaDB 
   views, we have received several reports of this causing performance
   problems and memory leaks.  Please know that when reporting problems when
   running PowerDNS on top of a modified schema, our open source support
@@ -43,14 +43,15 @@ domains table. The following SQL does the job:
 .. literalinclude:: ../../modules/gmysqlbackend/enable-foreign-keys.mysql.sql
    :language: SQL
 
-Using MySQL replication
------------------------
+Using MySQL/MariaDB replication
+-------------------------------
 
-To support ``NATIVE`` domains, the ``binlog_format`` for the MySQL
+To support ``NATIVE`` domains, the ``binlog_format`` for the MySQL/MariaDB
 replication **must** be set to ``MIXED`` or ``ROW`` to prevent
 differences in data between replicated servers. See `"Setting
 The Binary Log
 Format" <http://dev.mysql.com/doc/refman/5.7/en/binary-log-setting.html>`__
+and `"Binary Log Formats" <https://mariadb.com/kb/en/binary-log-formats/>`__
 for more information.
 
 Otherwise, you will probably see:
@@ -136,7 +137,11 @@ Use the InnoDB READ-COMMITTED transaction isolation level. Default: yes.
 ``gmysql-ssl``
 ^^^^^^^^^^^^^^^^^^
 
-Send the CLIENT_SSL capability flag to the server. SSL support is announced by the server via CLIENT_SSL and is enabled if the client returns the same capability. Default: no.
+.. deprecated:: 5.0.0
+
+Before 5.0.0: Send the CLIENT_SSL capability flag to the server. SSL support is announced by the server via CLIENT_SSL and is enabled if the client returns the same capability. Default: no.
+
+5.0.0 and up: this option does nothing. Use ``gmysql-group`` and put your TLS settings in ``my.cnf``.
 
 .. _setting-gmysql-timeout:
 

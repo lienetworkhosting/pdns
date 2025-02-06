@@ -90,7 +90,7 @@ class Zones(ApiTestCase):
         print(example_com)
         required_fields = ['id', 'url', 'name', 'kind']
         if is_auth():
-            required_fields = required_fields + ['masters', 'last_check', 'notified_serial', 'serial', 'account']
+            required_fields = required_fields + ['masters', 'last_check', 'notified_serial', 'serial', 'account', 'catalog']
             if dnssec:
                 required_fields = required_fields = ['dnssec', 'edited_serial']
             self.assertNotEqual(example_com['serial'], 0)
@@ -236,6 +236,15 @@ class AuthZones(ApiTestCase, AuthZonesHelperMixin):
             self.assertIn(k, data)
             if k in payload:
                 self.assertEqual(data[k], payload[k])
+
+        # check that the catalog is reflected in the /zones output (#13633)
+        r = self.session.get(self.url("/api/v1/servers/localhost/zones"))
+        self.assert_success_json(r)
+        domains = r.json()
+        domain = [domain for domain in domains if domain['name'] == name]
+        self.assertEqual(len(domain), 1)
+        domain = domain[0]
+        self.assertEqual(domain["catalog"], "catalog.invalid.")
 
     def test_create_zone_with_account(self):
         # soa_edit_api wins over serial
@@ -729,7 +738,7 @@ class AuthZones(ApiTestCase, AuthZonesHelperMixin):
 
     def test_delete_zone_metadata(self):
         r = self.session.delete(self.url("/api/v1/servers/localhost/zones/example.com/metadata/AXFR-SOURCE"))
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 204)
         r = self.session.get(self.url("/api/v1/servers/localhost/zones/example.com/metadata/AXFR-SOURCE"))
         rdata = r.json()
         self.assertEqual(r.status_code, 200)
@@ -836,7 +845,7 @@ class AuthZones(ApiTestCase, AuthZonesHelperMixin):
         data = r.json()
         print("status for axfr-retrieve:", data)
         self.assertEqual(data['result'], u'Added retrieval request for \'' + payload['name'] +
-                         '\' from master 127.0.0.2')
+                         '\' from primary 127.0.0.2')
 
     def test_notify_master_zone(self):
         name, payload, data = self.create_zone(kind='Master')
@@ -1926,7 +1935,7 @@ $NAME$  1D  IN  SOA ns1.example.org. hostmaster.example.org. (
 
     def test_zone_comment_create(self):
         name, payload, zone = self.create_zone()
-        rrset = {
+        rrset1 = {
             'changetype': 'replace',
             'name': name,
             'type': 'NS',
@@ -1942,7 +1951,19 @@ $NAME$  1D  IN  SOA ns1.example.org. hostmaster.example.org. (
                 }
             ]
         }
-        payload = {'rrsets': [rrset]}
+        rrset2 = {
+            'changetype': 'replace',
+            'name': name,
+            'type': 'SOA',
+            'ttl': 3600,
+            'comments': [
+                {
+                    'account': 'test3',
+                    'content': 'this should not show up later'
+                }
+            ]
+        }
+        payload = {'rrsets': [rrset1, rrset2]}
         r = self.session.patch(
             self.url("/api/v1/servers/localhost/zones/" + name),
             data=json.dumps(payload),
@@ -1954,13 +1975,15 @@ $NAME$  1D  IN  SOA ns1.example.org. hostmaster.example.org. (
             self.assert_success(r)
         # make sure the comments have been set, and that the NS
         # records are still present
-        data = self.get_zone(name)
+        data = self.get_zone(name, rrset_name=name, rrset_type="NS")
         serverset = get_rrset(data, name, 'NS')
         print(serverset)
         self.assertNotEqual(serverset['records'], [])
         self.assertNotEqual(serverset['comments'], [])
         # verify that modified_at has been set by pdns
         self.assertNotEqual([c for c in serverset['comments']][0]['modified_at'], 0)
+        # verify that unrelated comments do not leak into the result
+        self.assertEqual(get_rrset(data, name, 'SOA'), None)
         # verify that TTL is correct (regression test)
         self.assertEqual(serverset['ttl'], 3600)
 
@@ -1988,7 +2011,7 @@ $NAME$  1D  IN  SOA ns1.example.org. hostmaster.example.org. (
 
     @unittest.skipIf(is_auth_lmdb(), "No comments in LMDB")
     def test_zone_comment_out_of_range_modified_at(self):
-        # Test if comments on an rrset stay intact if the rrset is replaced
+        # Test if a modified_at outside of the 32 bit range throws an error
         name, payload, zone = self.create_zone()
         rrset = {
             'changetype': 'replace',
@@ -2546,7 +2569,7 @@ class AuthRootZone(ApiTestCase, AuthZonesHelperMixin):
 @unittest.skipIf(not is_recursor(), "Not applicable")
 class RecursorZones(ApiTestCase):
 
-    def create_zone(self, name=None, kind=None, rd=False, servers=None):
+    def create_zone(self, name=None, kind=None, rd=False, servers=None, notify_allowed=False):
         if name is None:
             name = unique_zone_name()
         if servers is None:
@@ -2555,7 +2578,8 @@ class RecursorZones(ApiTestCase):
             'name': name,
             'kind': kind,
             'servers': servers,
-            'recursion_desired': rd
+            'recursion_desired': rd,
+            'notify_allowed': notify_allowed
         }
         r = self.session.post(
             self.url("/api/v1/servers/localhost/zones"),
@@ -2586,6 +2610,13 @@ class RecursorZones(ApiTestCase):
 
     def test_create_forwarded_zone(self):
         payload, data = self.create_zone(kind='Forwarded', rd=False, servers=['8.8.8.8'])
+        # return values are normalized
+        payload['servers'][0] += ':53'
+        for k in payload.keys():
+            self.assertEqual(data[k], payload[k])
+
+    def test_create_forwarded_zone_notify_allowed(self):
+        payload, data = self.create_zone(kind='Forwarded', rd=False, servers=['8.8.8.8'], notify_allowed=True)
         # return values are normalized
         payload['servers'][0] += ':53'
         for k in payload.keys():
@@ -2710,4 +2741,4 @@ class AuthZoneKeys(ApiTestCase, AuthZonesHelperMixin):
         self.assertEqual(len(keydata), 4)
 
         r = self.session.delete(self.url("/api/v1/servers/localhost/zones/powerdnssec.org./metadata/PUBLISH-CDS"))
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 204)

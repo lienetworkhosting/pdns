@@ -6,6 +6,7 @@ import sys
 import threading
 import unittest
 import dns
+import dns.message
 import doqclient
 
 from dnsdisttests import DNSDistTest, pickAvailablePort
@@ -459,8 +460,8 @@ class TestAsyncFFI(DNSDistTest, AsyncTests):
       end
     end
 
-    local asyncResponderEndpoint = newNetworkEndpoint('%s')
-    local listener = newNetworkListener()
+    asyncResponderEndpoint = newNetworkEndpoint('%s')
+    listener = newNetworkListener()
     listener:addUnixListeningEndpoint('%s', 0, gotAsyncResponse)
     listener:start()
 
@@ -507,6 +508,11 @@ class TestAsyncFFI(DNSDistTest, AsyncTests):
       asyncResponderEndpoint:send(buffer)
 
       return DNSResponseAction.Allow
+    end
+
+    function atExit()
+      listener = nil
+      collectgarbage()
     end
 
     -- this only matters for tests actually reaching the backend
@@ -588,8 +594,8 @@ class TestAsyncLua(DNSDistTest, AsyncTests):
       end
     end
 
-    local asyncResponderEndpoint = newNetworkEndpoint('%s')
-    local listener = newNetworkListener()
+    asyncResponderEndpoint = newNetworkEndpoint('%s')
+    listener = newNetworkListener()
     listener:addUnixListeningEndpoint('%s', 0, gotAsyncResponse)
     listener:start()
 
@@ -615,6 +621,11 @@ class TestAsyncLua(DNSDistTest, AsyncTests):
       asyncResponderEndpoint:send(buffer)
 
       return DNSResponseAction.Allow
+    end
+
+    function atExit()
+      listener = nil
+      collectgarbage()
     end
 
     -- this only matters for tests actually reaching the backend

@@ -263,7 +263,7 @@ lot of improvements and bug fixes and tremendously increases compliance.
 We want to explicitly thank Kees Monshouwer for digging up all the
 DNSSEC improvements and porting them back to this release.
 
-When upgrading, please run "pdnssec rectify-all-zones" and trigger an
+When upgrading, please run ``pdnssec rectify-all-zones`` and trigger an
 AXFR for all DNSSEC zones to make sure you benefit from all the
 compliance improvements present in this version.
 
@@ -303,7 +303,7 @@ Improvements:
 Bug fixes:
 
 -  `commit 88c52fe <https://github.com/PowerDNS/pdns/commit/88c52fe>`__:
-   make makeRelative() case insensitive (Kees Monshouwer)
+   make makeRelative() case-insensitive (Kees Monshouwer)
 
 DNSSEC improvements:
 
@@ -489,7 +489,7 @@ Improvements:
 Experimental API changes (Chris Hofstaedtler):
 
 -  `commit ca44706 <https://github.com/PowerDNS/pdns/commit/ca44706>`__:
-   API: move shared DomainInfo reader into it's own function
+   API: move shared DomainInfo reader into its own function
 -  `commit 102602f <https://github.com/PowerDNS/pdns/commit/102602f>`__:
    API: allow writing to domains.account field
 -  `commit d82f632 <https://github.com/PowerDNS/pdns/commit/d82f632>`__:
@@ -528,7 +528,7 @@ Improvements:
 -  `commit 73004f1 <https://github.com/PowerDNS/pdns/commit/73004f1>`__:
    implement CORS for the HTTP API
 -  `commit 4d9c289 <https://github.com/PowerDNS/pdns/commit/4d9c289>`__:
-   qtype is now case insensitive in API and database
+   qtype is now case-insensitive in API and database
 -  `commit 13af5d8 <https://github.com/PowerDNS/pdns/commit/13af5d8>`__,
    `commit 223373a <https://github.com/PowerDNS/pdns/commit/223373a>`__,
    `commit 1d5a68d <https://github.com/PowerDNS/pdns/commit/1d5a68d>`__,
@@ -955,7 +955,7 @@ Other changes
 -  `commit 3613a51 <https://github.com/PowerDNS/pdns/commit/3613a51>`__:
    Show built-in features in ^^version output
 -  `commit 4bd7d35 <https://github.com/PowerDNS/pdns/commit/4bd7d35>`__:
-   make domainmetadata queries case insensitive
+   make domainmetadata queries case-insensitive
 -  `commit 088c334 <https://github.com/PowerDNS/pdns/commit/088c334>`__:
    output warning message when no to be notified NS's are found
 -  `commit 5631b44 <https://github.com/PowerDNS/pdns/commit/5631b44>`__:
@@ -1010,7 +1010,7 @@ Changes since 3.3
 -  `commit a7aa9be <https://github.com/PowerDNS/pdns/commit/a7aa9be>`__:
    Replace hardcoded make with variable
 -  `commit e4fe901 <https://github.com/PowerDNS/pdns/commit/e4fe901>`__:
-   make sure to run PKG\_PROG\_PKG\_CONFIG before the first PKG\_\*
+   make sure to run ``PKG_PROG_PKG_CONFIG`` before the first ``PKG_*``
    usage
 -  `commit 29bf169 <https://github.com/PowerDNS/pdns/commit/29bf169>`__:
    fix hmac-md5 TSIG key lookup
@@ -1072,7 +1072,7 @@ Changes since 3.3
 -  `commit 213ec4a <https://github.com/PowerDNS/pdns/commit/213ec4a>`__:
    add constraints for name to pg schema
 -  `commit f104427 <https://github.com/PowerDNS/pdns/commit/f104427>`__:
-   make domainmetadata queries case insensitive
+   make domainmetadata queries case-insensitive
 -  `commit 78fc378 <https://github.com/PowerDNS/pdns/commit/78fc378>`__:
    no label compression for name in TSIG records
 -  `commit 15d6ffb <https://github.com/PowerDNS/pdns/commit/15d6ffb>`__:
@@ -1103,7 +1103,7 @@ catering to their needs beyond the specifications.
 **Warning**: Version 3.3 of the PowerDNS Authoritative Server is a major
 upgrade if you are coming from 2.9.x. There are also some important
 changes if you are coming from 3.0, 3.1 or 3.2. Please refer to the
-`Upgrade documentation <authoritative/upgrading.md>`__ for important
+`Upgrade documentation <../upgrading.rst>`__ for important
 information on correct and stable operation, as well as notes on
 performance and memory use.
 
@@ -1443,7 +1443,7 @@ Other changes
    parameters for pdnssec.
 -  `commit 2f2b014 <https://github.com/PowerDNS/pdns/commit/2f2b014>`__:
    apply variant of code in `ticket
-   714 <https://github.com/PowerDNS/pdns/issues/714>`__ so we can lauch
+   714 <https://github.com/PowerDNS/pdns/issues/714>`__ so we can launch
    pipe backend scripts with parameters, plus add experimental code that
    if pipe-command is a unix domain socket, we use that.
 -  `commit 9566683 <https://github.com/PowerDNS/pdns/commit/9566683>`__:
@@ -1561,7 +1561,7 @@ Changes between 3.2-RC2 and 3.2-RC3
    3003 <http://wiki.powerdns.com/projects/trac/changeset/3003>`__.
 -  Mark Zealey found that an earlier performance improvement could cause
    crashes under high load, with lots of IPs configured in local-address
-   and receiver-threads higher than 1. Fixed in `commit
+   and receiver-threads greater than 1. Fixed in `commit
    3005 <http://wiki.powerdns.com/projects/trac/changeset/3005>`__.
 
 Changes between 3.2-RC1 and 3.2-RC2
@@ -2179,7 +2179,7 @@ Changes between RC1 and RC2
 -  We imported the TinyDNS backend by Ruben d'Arco. Code mostly in
    `commit
    2559 <http://wiki.powerdns.com/projects/trac/changeset/2559>`__. See
-   `TinyDNS Backend <authoritative/backend-tinydns.md>`__.
+   `TinyDNS Backend <../backends/tinydns.rst>`__.
 -  Overriding C(XX)FLAGS is easier now. Problem pointed out by Jose
    Arthur Benetasso Villanova and others, fix suggested by Sten Spans.
    Patch in `commit
@@ -2748,13 +2748,10 @@ important protocol is among the easiest to use available. In addition,
 all important algorithms are supported.
 
 Complete detail can be found in `Serving authoritative DNSSEC
-data <authoritative/dnssec.md>`__. The goal of 'PowerDNSSEC' is to allow
-existing PowerDNS installations to start serving DNSSEC with as little
-hassle as possible, while maintaining performance and achieving high
-levels of security.
-
-Tutorials and examples of how to use DNSSEC in PowerDNS can be found
-linked from http://powerdnssec.org.
+data <../dnssec/intro.rst>`__. The goal of PowerDNS's DNSSEC support
+is to allow existing PowerDNS installations to start serving DNSSEC with
+as little hassle as possible, while maintaining performance and
+achieving high levels of security.
 
 PowerDNS Authoritative Server 3.0 development has been made possible by
 the financial and moral support of
@@ -2764,7 +2761,6 @@ the financial and moral support of
    DNS <http://www.ipcom.at/en/dns/rcodezero_anycast/>`__, a subsidiary
    of NIC.AT, the Austrian registry
 -  `SIDN, the Dutch registry <http://www.sidn.nl/>`__
--  .. (awaiting details) ..
 
 This release has received exceptional levels of community support, and
 we'd like to thank the following people in addition to those mentioned
@@ -4187,7 +4183,7 @@ job, and to let us know the results.
 
 Additionally, the bind2backend is almost ready to replace the stock bind
 backend. If you run with Bind zones, you are cordially invited to
-substitute 'launch=bind2' for 'launch=bind'. This will happen
+substitute ``launch=bind2`` for ``launch=bind``. This will happen
 automatically in 2.9.19!
 
 In other news, the entire Wikipedia constellation now runs on PowerDNS
@@ -4263,7 +4259,7 @@ Improvements
 Recursor improvements and fixes.
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-See `Recursion <authoritative/recursion.md>`__ for details. The changes
+See `Recursion <../guides/recursion.rst>`__ for details. The changes
 below mean that all of the caveats listed for the recursor have now been
 addressed.
 
@@ -4502,7 +4498,7 @@ Improvements
 -  PostgreSQL now only depends on the C API and not on the deprecated
    C++ one
 -  PowerDNS can now fully overrule external zones when doing recursion.
-   See `Recursion <authoritative/recursion.md>`__.
+   See `Recursion <../guides/recursion.rst>`__.
 
 Version 2.9.13
 --------------
@@ -4686,7 +4682,7 @@ Bugs fixed
    wasted memory and also led to the continued non-existence of hosts
    that since had come into existence.
 -  The Generic SQL backends did not lowercase the names of records,
-   which led to new records not being found by case sensitive databases
+   which led to new records not being found by case-sensitive databases
    (notably PostgreSQL). Found by Volker Goetz.
 -  NS queries for zones for which we did not carry authority, but only
    had delegation information, had their NS records in the wrong
@@ -4753,7 +4749,7 @@ Improvements
    fact only made things worse.
 -  LDAP backend updates from its author Norbert Sendetzky. Reverse
    lookups should work now too.
--  An error message about unparseable packets did not include the
+-  An error message about unparsable packets did not include the
    originating IP address (fixed by Mark Bergsma)
 -  PowerDNS can now be started via path resolution while running with a
    guardian. Suggested by Maurice Nonnekes.
@@ -4770,7 +4766,7 @@ Bugs fixed
 -  ``pdns_control`` could leave behind remnants in case PowerDNS was not
    running (reported by dG)
 -  Incoming AXFR did not work on Solaris and other big-endian systems
-   (Willem de Groot helped debugging this long standing problem).
+   (Willem de Groot helped debugging this long-standing problem).
 -  Recursor could crash on convoluted CNAME loops. Thanks to Dan Faerch
    for delivering core dumps.
 -  Silly 'wuh' debugging output in zone2sql and bindbackend removed
@@ -4853,7 +4849,7 @@ However, this turns out to not be that bad at all. The recursor can now
 be restarted without having to restart the rest of the nameserver, for
 example. Cooperation between the both halves of PowerDNS is also almost
 seamless. As a result, 'non-lazy recursion' has been dropped. See
-`Recursion <authoritative/recursion.md>`__ for more details.
+`Recursion <../guides/recursion.rst>`__ for more details.
 
 Furthermore, the recursor only works on Linux, Windows and Solaris (not
 entirely). FreeBSD does not support the required functions. If you know
@@ -4945,7 +4941,7 @@ From this, it is apparent that far more people are interested in
 PowerDNS than yet know about it. So spread the word!
 
 In other news, we now have a security page at
-`Security <security/index.md>`__. Furthermore, Maurice Nonnekes
+`Security <../security.rst>`__. Furthermore, Maurice Nonnekes
 contributed an OpenBSD port! See `his
 page <http://www.codeninja.nl/openbsd/powerdns/>`__ for more details!
 
@@ -5069,9 +5065,9 @@ instructions. Without instructions, the right things also happen, but
 the operator is in charge.
 
 For more about all this coolness, see
-`“pdns\_control” <authoritative/running.md#pdnscontrol>`__ and
+`“pdns\_control” <running.rst#pdnscontrol>`__ and
 `“pdns\_control
-commands” <authoritative/backend-bind.md#bind-control-commands>`__.
+commands” <backends/bind.rst#bind-control-commands>`__.
 
 **Warning**: Again some changes in compilation instructions. The hybrid
 pgmysql backend has been split up into 'gmysql' and 'gpgsql', sharing a
@@ -5301,7 +5297,7 @@ already been running 24 hours on our servers before release.
 Version 2.7 and 2.7.1
 ---------------------
 
-This version fixes some very long standing issues and adds a few new
+This version fixes some very long-standing issues and adds a few new
 features. If you are still running 2.6, upgrade yesterday. If you were
 running 2.6.1, an upgrade is still strongly advised.
 
@@ -5423,7 +5419,7 @@ release fixing a huge memory leak in the new Query Cache.
 
 Developers: this version needs the new pdns-2.5.1 development kit,
 available on http://downloads.powerdns.com/releases/dev. See also
-`Backend writers' guide <appendix/backend-writers-guide.md>`__.
+`Backend writers' guide <../appendices/backend-writers-guide.rst>`__.
 
 And some small changes
 
@@ -5480,7 +5476,7 @@ New features
    The webserver also displays the efficiency of the new Query Cache.
 
    The old Packet Cache is still there (and useful) but see
-   `Authoritative Server Performance <authoritative/performance.md>`__
+   `Authoritative Server Performance <../performance.rst>`__
    for more details.
 
 -  There is now the ability to shut off some logging at a very early
@@ -5495,7 +5491,7 @@ New features
 Enhancements
 ^^^^^^^^^^^^
 
--  Packet Cache is now case insensitive, leading to a higher hitrate
+-  Packet Cache is now case-insensitive, leading to a higher hitrate
    because identical queries only differing in case now both match. Care
    is taken to restore the proper case in the answer sent out.
 -  Packet Cache stores packets more efficiently now, savings are
@@ -5538,7 +5534,7 @@ Version 2.4
 
 Developers: this version is compatible with the pdns-2.1 development
 kit, available on http://downloads.powerdns.com/releases/dev. See also
-`*Backend writers' guide* <appendix/backend-writers-guide.md>`__.
+`*Backend writers' guide* <../appendices/backend-writers-guide.rst>`__.
 
 This version fixes some stability issues with malformed or malcrafted
 packets. An upgrade is advised. Furthermore, there are interesting new
@@ -5585,7 +5581,7 @@ Version 2.3
 
 Developers: this version is compatible with the pdns-2.1 development
 kit, available on http://downloads.powerdns.com/releases/dev. See also
-`Backend writers' guide <appendix/backend-writers-guide.md>`__
+`Backend writers' guide <../appendices/backend-writers-guide.rst>`__
 
 This release adds the Generic MySQL backend which allows full
 master/slave semantics with MySQL and InnoDB tables (or other tables
@@ -5627,7 +5623,7 @@ Version 2.2
 
 Developers: this version is compatible with the pdns-2.1 development
 kit, available on http://downloads.powerdns.com/releases/dev. See also
-`Backend writers' guide <appendix/backend-writers-guide.md>`__
+`Backend writers' guide <../appendices/backend-writers-guide.rst>`__
 
 Again a big release. PowerDNS is seeing some larger deployments in more
 demanding environments and these are helping shake out remaining issues,
@@ -5668,12 +5664,12 @@ New features
 -  **pdns\_control purge** can now also purge based on suffix, allowing
    operators to purge an entire domain from the packet cache instead of
    only specific records. See also
-   `pdns\_control <authoritative/running.md#pdnscontrol>`__ Thanks to
+   `pdns\_control <running.rst#pdnscontrol>`__ Thanks to
    Mike Benoit for this suggestion.
 -  **soa-serial-offset** for installations with small SOA serial numbers
    wishing to register .DE domains with DENIC which demands six-figure
    SOA serial numbers. See also `Chapter 21, *Index of all Authoritative
-   Server settings* <authoritative/settings.md>`__.
+   Server settings* <../settings.rst>`__.
 
 Version 2.1
 -----------
@@ -5724,7 +5720,7 @@ Unexpected behaviour
    with user expectations. If a recursive question can be answered
    entirely from local data, it is. To restore old behaviour, disable
    **lazy-recursion**. Also see
-   `Recursion <authoritative/recursion.md>`__.
+   `Recursion <../guides/recursion.rst>`__.
 
 Features
 ^^^^^^^^
@@ -5737,13 +5733,13 @@ Features
 -  Zone2sql now accepts ^^transactions to wrap zones in a transaction
    for PostgreSQL and Oracle output. This is a major speedup and also
    makes for better isolation of inserts. See
-   `Zone2sql <authoritative/migration.md#zone2sql>`__.
+   `Zone2sql <migration.rst#zone2sql>`__.
 -  **pdns\_control** now has the ability to purge the PowerDNS cache or
    parts of it. This enables operators to raise the TTL of the Packet
    Cache to huge values and only to invalidate the cache when changes
    are made. See also `Authoritative Server
-   Performance <authoritative/performance.md>`__ and
-   `pdns\_control <authoritative/running.md#pdnscontrol>`__.
+   Performance <../performance.rst>`__ and
+   `pdns\_control <../running.rst#pdnscontrol>`__.
 
 Version 2.0.1
 -------------
@@ -5913,7 +5909,7 @@ Bugs fixed
    www.powerdns.com. While this did not confuse resolvers, it is better
    to conserve case. This has semantic consequences for all backends,
    which the documentation now spells out.
--  PostgreSQL backend was case sensitive and returned only answers in
+-  PostgreSQL backend was case-sensitive and returned only answers in
    case an exact match was found. The Generic PostgreSQL backend is now
    officially all lower case and zone2sql in PostgreSQL mode enforces
    this. Documentation has been updated to reflect the case change.
@@ -5929,15 +5925,15 @@ Features
 ^^^^^^^^
 
 -  pdns\_control (see
-   `pdns\_control <authoritative/running.md#pdnscontrol>`__) now opens
+   `pdns\_control <running.rst#pdnscontrol>`__) now opens
    the local end of its socket in ``/tmp`` instead of next to the remote
    socket (by default ``/var/run``). This eases the way for allowing
    non-root access to pdns\_control. When running chrooted (see
    `Chapter 7, *Security settings &
-   considerations* <common/security.md>`__), the local socket again
+   considerations* <../security.rst>`__), the local socket again
    moves back to ``/var/run``.
 -  pdns\_control now has a 'version' command. See `Section 1.1,
-   “pdns\_control” <authoritative/running.md#pdnscontrol>`__.
+   “pdns\_control” <../running.rst#pdnscontrol>`__.
 
 Version 1.99.11 Prerelease
 --------------------------
@@ -6049,7 +6045,7 @@ Features
    `Supermaster automatic provisioning of
    slaves <authoritative/modes-of-operation.md#supermaster>`__.
 -  Recursing backend can now live on a non-standard (!=53) port. See
-   `Recursion <authoritative/recursion.md>`__.
+   `Recursion <../guides/recursion.rst>`__.
 -  Slave zone retrieval is now queued instead of immediate, which scales
    better and is more resilient to temporary failures.
 -  **max-queue-length** parameter. If this many packets are queued for
@@ -6097,17 +6093,17 @@ Bugs fixed
 Feature enhancements
 ^^^^^^^^^^^^^^^^^^^^
 
--  Recursing backend. See `Recursion <authoritative/recursion.md>`__.
+-  Recursing backend. See `Recursion <../guides/recursion.rst>`__.
    Allows recursive and authoritative DNS on the same IP address.
--  `NAPTR support <types.md#naptr>`__, which is especially useful for
+-  `NAPTR support <appendices/types.rst#naptr>`__, which is especially useful for
    the ENUM/E.164 community.
 -  Zone transfers can now be allowed per `netmask instead of only per IP
-   address <authoritative/settings.md#allow-axfr-ips>`__.
+   address <../settings.rst#allow-axfr-ips>`__.
 -  Preliminary support for slave operation included. Only for the
    adventurous right now! See `Slave
-   operation <authoritative/modes-of-operation.md>`__
+   operation <../modes-of-operation.rst>`__
 -  All record types now documented, see `Supported record types and
-   their storage <types.md>`__.
+   their storage <../appendices/types.rst>`__.
 
 Known bugs
 ^^^^^^^^^^
@@ -6330,7 +6326,7 @@ Feature enhancements
    prefix.
 -  zone2sql now accepts a ^^zone-name parameter
 -  BindBackend maturing - 9500 zones parsed in 3.5 seconds. No longer
-   case sensitive.
+   case-sensitive.
 
 Performance enhancements
 ^^^^^^^^^^^^^^^^^^^^^^^^

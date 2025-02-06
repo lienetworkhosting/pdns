@@ -1,8 +1,10 @@
+#include "config.h"
 #include <cassert>
 #include <fstream>
 #include <unordered_set>
 #include <unordered_map>
 #include <typeinfo>
+#include <sys/stat.h>
 #include "logger.hh"
 #include "logging.hh"
 #include "iputils.hh"
@@ -15,25 +17,60 @@
 #include "ext/luawrapper/include/LuaContext.hpp"
 #include "dns_random.hh"
 
-BaseLua4::BaseLua4() {
-}
-
-void BaseLua4::loadFile(const std::string& fname)
+void BaseLua4::loadFile(const std::string& fname, bool doPostLoad)
 {
   std::ifstream ifs(fname);
   if (!ifs) {
     auto ret = errno;
     auto msg = stringerror(ret);
-    SLOG(g_log << Logger::Error << "Unable to read configuration file from '" << fname << "': " << msg << endl,
-         g_slog->withName("lua")->error(Logr::Error, ret, "Unable to read configuration file", "file", Logging::Loggable(fname), "msg", Logging::Loggable(msg)));
+    g_log << Logger::Error << "Unable to read configuration file from '" << fname << "': " << msg << endl;
     throw std::runtime_error(msg);
   }
-  loadStream(ifs);
+  loadStream(ifs, doPostLoad);
 };
 
 void BaseLua4::loadString(const std::string &script) {
   std::istringstream iss(script);
-  loadStream(iss);
+  loadStream(iss, true);
+};
+
+void BaseLua4::includePath(const std::string& directory) {
+  std::vector<std::string> vec;
+  const std::string& suffix = "lua";
+  auto directoryError = pdns::visit_directory(directory, [this, &directory, &suffix, &vec]([[maybe_unused]] ino_t inodeNumber, const std::string_view& name) {
+    (void)this;
+    if (boost::starts_with(name, ".")) {
+      return true; // skip any dots
+    }
+    if (boost::ends_with(name, suffix)) {
+      // build name
+      string fullName = directory + "/" + std::string(name);
+      // ensure it's readable file
+      struct stat statInfo
+      {
+      };
+      if (stat(fullName.c_str(), &statInfo) != 0 || !S_ISREG(statInfo.st_mode)) {
+        string msg = fullName + " is not a regular file";
+        g_log << Logger::Error << msg << std::endl;
+        throw PDNSException(msg);
+      }
+      vec.emplace_back(fullName);
+    }
+    return true;
+  });
+
+  if (directoryError) {
+    int err = errno;
+    string msg = directory + " is not accessible: " + stringerror(err);
+    g_log << Logger::Error << msg << std::endl;
+    throw PDNSException(msg);
+  }
+
+  std::sort(vec.begin(), vec.end(), CIStringComparePOSIX());
+
+  for(const auto& file: vec) {
+    loadFile(file, false);
+  }
 };
 
 //  By default no features
@@ -217,7 +254,7 @@ void BaseLua4::prepareContext() {
   d_lw->registerFunction("match", (bool (NetmaskGroup::*)(const ComboAddress&) const)&NetmaskGroup::match);
 
   // DNSRecord
-  d_lw->writeFunction("newDR", [](const DNSName &name, const std::string &type, unsigned int ttl, const std::string &content, int place){ QType qtype; qtype = type; auto dr = DNSRecord(); dr.d_name = name; dr.d_type = qtype.getCode(); dr.d_ttl = ttl; dr.setContent(shared_ptr<DNSRecordContent>(DNSRecordContent::mastermake(dr.d_type, QClass::IN, content))); dr.d_place = static_cast<DNSResourceRecord::Place>(place); return dr; });
+  d_lw->writeFunction("newDR", [](const DNSName& name, const std::string& type, unsigned int ttl, const std::string& content, int place) { QType qtype; qtype = type; auto dr = DNSRecord(); dr.d_name = name; dr.d_type = qtype.getCode(); dr.d_ttl = ttl; dr.setContent(shared_ptr<DNSRecordContent>(DNSRecordContent::make(dr.d_type, QClass::IN, content))); dr.d_place = static_cast<DNSResourceRecord::Place>(place); return dr; });
   d_lw->registerMember("name", &DNSRecord::d_name);
   d_lw->registerMember("type", &DNSRecord::d_type);
   d_lw->registerMember("ttl", &DNSRecord::d_ttl);
@@ -232,13 +269,24 @@ void BaseLua4::prepareContext() {
         ret=aaaarec->getCA(53);
       return ret;
     });
-  d_lw->registerFunction<void(DNSRecord::*)(const std::string&)>("changeContent", [](DNSRecord& dr, const std::string& newContent) { dr.setContent(shared_ptr<DNSRecordContent>(DNSRecordContent::mastermake(dr.d_type, 1, newContent))); });
+  d_lw->registerFunction<void (DNSRecord::*)(const std::string&)>("changeContent", [](DNSRecord& dr, const std::string& newContent) { dr.setContent(shared_ptr<DNSRecordContent>(DNSRecordContent::make(dr.d_type, 1, newContent))); });
 
-  // pdnsload
-  d_lw->writeFunction("pdnslog", [](const std::string& msg, boost::optional<int> loglevel) {
-    SLOG(g_log << (Logger::Urgency)loglevel.get_value_or(Logger::Warning) << msg<<endl,
-         g_slog->withName("lua")->info(static_cast<Logr::Priority>(loglevel.get_value_or(Logr::Warning)), msg));
+  // pdnslog
+#ifdef RECURSOR
+  d_lw->writeFunction("pdnslog", [](const std::string& msg, boost::optional<int> loglevel, boost::optional<std::map<std::string, std::string>> values) {
+    auto log = g_slog->withName("lua");
+    if (values) {
+      for (const auto& [key, value] : *values) {
+        log = log->withValues(key, Logging::Loggable(value));
+      }
+    }
+    log->info(static_cast<Logr::Priority>(loglevel.get_value_or(Logr::Warning)), msg);
+#else
+    d_lw->writeFunction("pdnslog", [](const std::string& msg, boost::optional<int> loglevel) {
+      g_log << (Logger::Urgency)loglevel.get_value_or(Logger::Warning) << msg<<endl;
+#endif
   });
+
   d_lw->writeFunction("pdnsrandom", [](boost::optional<uint32_t> maximum) {
     return maximum ? dns_random(*maximum) : dns_random_uint32();
   });
@@ -290,10 +338,12 @@ void BaseLua4::prepareContext() {
   d_lw->writeVariable("pdns", d_pd);
 }
 
-void BaseLua4::loadStream(std::istream &is) {
-  d_lw->executeCode(is);
+void BaseLua4::loadStream(std::istream &stream, bool doPostLoad) {
+  d_lw->executeCode(stream);
 
-  postLoad();
+  if (doPostLoad) {
+    postLoad();
+  }
 }
 
-BaseLua4::~BaseLua4() { }
+BaseLua4::~BaseLua4() = default;

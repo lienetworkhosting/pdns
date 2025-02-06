@@ -138,11 +138,8 @@ public:
 private:
   struct PerThread
   {
-    PerThread() :
-      d_urgency(Info)
-    {}
     string d_output;
-    Urgency d_urgency;
+    Urgency d_urgency{Info};
   };
   PerThread& getPerThread();
   void open();
@@ -151,12 +148,12 @@ private:
   string name;
   int flags;
   int d_facility;
-  Urgency d_loglevel;
-  Urgency consoleUrgency;
-  bool opened;
-  bool d_disableSyslog;
+  Urgency d_loglevel{Logger::None};
+  Urgency consoleUrgency{Error};
+  bool opened{false};
+  bool d_disableSyslog{false};
   bool d_timestamps{true};
-  bool d_prefixed{false};
+  bool d_prefixed{false}; // this used to prefix the loglevel, but now causes formatting like structured logging
 };
 
 Logger& getLogger();
@@ -177,32 +174,38 @@ struct LogVariant
 {
   string prefix;
   timeval start;
-  // variant cannot hold references
-  std::variant<Logger*, ostringstream*> v;
+  // variant cannot hold references directly, use a wrapper
+  std::variant<std::reference_wrapper<Logger>, std::reference_wrapper<ostringstream>> v;
 };
 
 using OptLog = std::optional<LogVariant>;
 
 void addTraceTS(const timeval& start, ostringstream& str);
 
-#define VLOG(log, x)                                                       \
-  if (log) {                                                               \
-    if (std::holds_alternative<Logger*>((log)->v)) {                       \
-      *std::get<Logger*>(log->v) << Logger::Warning << (log)->prefix << x; \
-    }                                                                      \
-    else if (std::holds_alternative<ostringstream*>((log)->v)) {           \
-      addTraceTS((log)->start, *std::get<ostringstream*>((log)->v));       \
-      *std::get<ostringstream*>((log)->v) << (log)->prefix << x;           \
-    }                                                                      \
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define VLOG(log, x)                                                                                     \
+  if (log) {                                                                                             \
+    if (std::holds_alternative<std::reference_wrapper<Logger>>((log)->v)) {                              \
+      /* NOLINTNEXTLINE(bugprone-macro-parentheses) */                                                   \
+      std::get<std::reference_wrapper<Logger>>((log)->v).get() << Logger::Warning << (log)->prefix << x; \
+    }                                                                                                    \
+    else if (std::holds_alternative<std::reference_wrapper<ostringstream>>((log)->v)) {                  \
+      addTraceTS((log)->start, std::get<std::reference_wrapper<ostringstream>>((log)->v).get());         \
+      /* NOLINTNEXTLINE(bugprone-macro-parentheses) */                                                   \
+      std::get<std::reference_wrapper<ostringstream>>((log)->v).get() << (log)->prefix << x;             \
+    }                                                                                                    \
   }
 
-#define VLOG_NO_PREFIX(log, x)                                       \
-  if (log) {                                                         \
-    if (std::holds_alternative<Logger*>((log)->v)) {                 \
-      *std::get<Logger*>(log->v) << Logger::Warning << x;            \
-    }                                                                \
-    else if (std::holds_alternative<ostringstream*>((log)->v)) {     \
-      addTraceTS((log)->start, *std::get<ostringstream*>((log)->v)); \
-      *std::get<ostringstream*>((log)->v) << x;                      \
-    }                                                                \
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define VLOG_NO_PREFIX(log, x)                                                                   \
+  if (log) {                                                                                     \
+    if (std::holds_alternative<std::reference_wrapper<Logger>>((log)->v)) {                      \
+      /* NOLINTNEXTLINE(bugprone-macro-parentheses) */                                           \
+      std::get<std::reference_wrapper<Logger>>((log)->v).get() << Logger::Warning << x;          \
+    }                                                                                            \
+    else if (std::holds_alternative<std::reference_wrapper<ostringstream>>((log)->v)) {          \
+      addTraceTS((log)->start, std::get<std::reference_wrapper<ostringstream>>((log)->v).get()); \
+      /* NOLINTNEXTLINE(bugprone-macro-parentheses) */                                           \
+      std::get<std::reference_wrapper<ostringstream>>((log)->v).get() << x;                      \
+    }                                                                                            \
   }

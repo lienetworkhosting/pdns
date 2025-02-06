@@ -1,4 +1,7 @@
+#ifndef BOOST_TEST_DYN_LINK
 #define BOOST_TEST_DYN_LINK
+#endif
+
 #define BOOST_TEST_NO_MAIN
 
 #ifdef HAVE_CONFIG_H
@@ -210,7 +213,7 @@ BOOST_AUTO_TEST_CASE(test_getCarbonHostName)
 
   BOOST_CHECK_EQUAL(gethostname(buffer, sizeof buffer), 0);
   std::string my_hostname(buffer);
-  boost::replace_all(my_hostname, ".", "_");
+  std::replace(my_hostname.begin(), my_hostname.end(), '.', '_');
 
   std::string hostname = getCarbonHostName();
   // ensure it matches what we get
@@ -395,6 +398,25 @@ BOOST_AUTO_TEST_CASE(test_makeHexDump) {
   auto out = makeHexDump("\x12\x34\x56\x78\x90\xab\xcd\xef");
   // there is a trailing white space by design
   BOOST_CHECK_EQUAL(out, "12 34 56 78 90 ab cd ef ");
+}
+
+BOOST_AUTO_TEST_CASE(test_CleanSlashes) {
+  auto cleanSlashesWrapper = [](const char* str) {
+    std::string fullStr(str);
+    cleanSlashes(fullStr);
+    return fullStr;
+  };
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper(""), "");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("/"), "/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("//"), "/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("/test"), "/test");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("//test"), "/test");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("///test"), "/test");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("/test/"), "/test/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("//test/"), "/test/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("//test//"), "/test/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("///test//"), "/test/");
+  BOOST_CHECK_EQUAL(cleanSlashesWrapper("test///"), "test/");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

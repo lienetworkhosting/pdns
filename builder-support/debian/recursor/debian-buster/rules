@@ -7,6 +7,10 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/default.mk
 
+CONFIGURE_ARGS =
+
+# Workaround for debbug #1078413 https://github.com/PowerDNS/pdns/issues/14084
+CONFIGURE_ARGS += --with-libcrypto=/usr
 
 %:
 	dh $@
@@ -30,8 +34,10 @@ override_dh_auto_configure:
 		--with-net-snmp \
 		--enable-dns-over-tls \
 		--enable-dnstap \
-		--enable-nod
+		--enable-nod \
+		$(CONFIGURE_ARGS)
 
+# Stop installing the Lua config files once we fully moved to YAML configuration
 override_dh_auto_install:
 	dh_auto_install
 	install -d debian/pdns-recursor/usr/share/pdns-recursor/lua-config
@@ -41,15 +47,20 @@ override_dh_auto_install:
 	install -m 644 -t debian/pdns-recursor/usr/share/pdns-recursor/snmp RECURSOR-MIB.txt
 	rm -f debian/pdns-recursor/etc/powerdns/recursor.conf-dist
 	rm -f debian/pdns-recursor/etc/powerdns/recursor.yml-dist
-	./pdns_recursor --no-config --config=default | sed \
-		-e 's!^# config-dir=.*!config-dir=/etc/powerdns!' \
-		-e 's!^# hint-file=.*!&\nhint-file=/usr/share/dns/root.hints!' \
-		-e 's!^# include-dir=.*!&\ninclude-dir=/etc/powerdns/recursor.d!' \
-		-e 's!^# local-address=.*!local-address=127.0.0.1!' \
-		-e 's!^# lua-config-file=.*!lua-config-file=/etc/powerdns/recursor.lua!' \
-		-e 's!^# quiet=.*!quiet=yes!' \
-		-e '/^# version-string=.*/d' \
-		> debian/pdns-recursor/etc/powerdns/recursor.conf
+	@echo "\
+	dnssec:\n\
+	  # validation: process # default\n\
+	  trustanchorfile: /usr/share/dns/root.key\n\
+	recursor:\n\
+	  hint_file: /usr/share/dns/root.hints\n\
+	  include_dir: /etc/powerdns/recursor.d\n\
+	incoming:\n\
+	 # listen:\n\
+	 # - 127.0.0.1 # default\n\
+	outgoing:\n\
+	 # source_address:\n\
+	 # - 0.0.0.0 # default\n\
+	" > debian/pdns-recursor/etc/powerdns/recursor.conf
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))

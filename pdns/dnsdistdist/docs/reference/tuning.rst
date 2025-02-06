@@ -40,6 +40,11 @@ Tuning related functions
   .. versionchanged:: 1.7.0
     The default value has been set back to 10.
 
+  .. warning::
+
+    Be wary of using a too large value for this setting. :program:`dnsdist` keeps a per-thread cache of TCP connections to its backends so using a large value could, in addition to creating a lot of threads,
+    lead to a very high number of TCP connections to the backends. PowerDNS Recursor, for example, has a low default limit (128) for the number of incoming TCP connections it is willing to accept.
+
   Set the maximum of TCP client threads, handling TCP connections. Before 1.4.0 a TCP thread could only handle a single incoming TCP connection at a time, while after 1.4.0 it can handle a larger number of them simultaneously.
 
   Note that before 1.6.0 the TCP worker threads were created at runtime, adding a new thread when the existing ones seemed to struggle with the load, until the maximum number of threads had been reached. Starting with 1.6.0 the configured number of worker threads are immediately created at startup.
@@ -188,6 +193,7 @@ Tuning related functions
   Set the size of the receive (``SO_RCVBUF``) and send (``SO_SNDBUF``) buffers for incoming UDP sockets. On Linux the default
   values correspond to ``net.core.rmem_default`` and ``net.core.wmem_default`` , and the maximum values are restricted
   by ``net.core.rmem_max`` and ``net.core.wmem_max``.
+  Since 1.9.0, on Linux, dnsdist will automatically try to raise the buffer sizes to the maximum value allowed by the system (``net.core.rmem_max`` and ``net.core.wmem_max``) if :func:`setUDPSocketBufferSizes` is not set.
 
   :param int recv: ``SO_RCVBUF`` value. Default is 0, meaning the system value will be kept.
   :param int send: ``SO_SNDBUF`` value. Default is 0, meaning the system value will be kept.
